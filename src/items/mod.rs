@@ -1,0 +1,10 @@
+mod niri;
+pub mod paymo;
+pub mod pulseaudio;
+pub mod system;
+pub mod test_display;
+pub mod weather_icons;
+pub mod time;
+pub mod weather;
+pub mod windows;
+pub mod workspaces;
