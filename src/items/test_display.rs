@@ -1,17 +1,17 @@
 use tokio::task::JoinHandle;
 
 use crate::{
-    section_writer::{SectionWriter, BLUE, DARK_GREEN, DARK_GRAY, LIGHT_GRAY, RED, WHITE},
     error::Error,
-    state_item::{
-        ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem,
-    },
+    section_writer::{DARK_GREEN, SectionWriter, WHITE},
+    state_item::{ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem},
     utils::spinner,
 };
 
+#[allow(dead_code)]
 pub struct TestDisplay;
 
 impl TestDisplay {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self
     }

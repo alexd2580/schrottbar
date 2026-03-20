@@ -1,7 +1,7 @@
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use tiny_skia::{BlendMode, FillRule, Paint, PathBuilder, PixmapMut, Rect, Transform};
 
-use crate::types::{Poly, Polys, PowerlineDirection, PowerlineFill, PowerlineStyle, RGBA};
+use crate::types::{IconData, Poly, Polys, PowerlineDirection, PowerlineFill, PowerlineStyle, RGBA};
 
 pub struct Renderer {
     font_system: FontSystem,
@@ -109,13 +109,26 @@ impl Renderer {
             .ceil() as u32
     }
 
-    pub fn draw_text(
+    pub fn draw_text_outlined(
+        &mut self,
+        pixmap: &mut PixmapMut,
+        text: &str,
+        fg: RGBA,
+        outline: RGBA,
+        x: u32,
+        canvas_height: u32,
+    ) {
+        self.draw_text_inner(pixmap, text, fg, x, canvas_height, Some(outline));
+    }
+
+    fn draw_text_inner(
         &mut self,
         pixmap: &mut PixmapMut,
         text: &str,
         fg: RGBA,
         x: u32,
         canvas_height: u32,
+        outline: Option<RGBA>,
     ) {
         let buffer = self.shape_text(text);
 
@@ -126,68 +139,93 @@ impl Renderer {
         );
         let baseline_offset = (canvas_height - text_height) / 2 + self.ascent;
 
+        let pw = pixmap.width() as i32;
+        let ph = pixmap.height() as i32;
+
+        // Collect glyph images so we can do multiple passes without re-rasterizing.
+        struct GlyphData {
+            gx: i32,
+            gy: i32,
+            width: i32,
+            height: i32,
+            content: cosmic_text::SwashContent,
+            data: Vec<u8>,
+        }
+
+        let mut glyphs = Vec::new();
         for run in buffer.layout_runs() {
             for glyph in run.glyphs.iter() {
                 let physical = glyph.physical((x as f32, 0.0), 1.0);
-
                 if let Some(image) = self
                     .swash_cache
                     .get_image(&mut self.font_system, physical.cache_key)
                 {
-                    let gx = physical.x + image.placement.left;
-                    let gy = baseline_offset as i32 - image.placement.top;
+                    glyphs.push(GlyphData {
+                        gx: physical.x + image.placement.left,
+                        gy: baseline_offset as i32 - image.placement.top,
+                        width: image.placement.width as i32,
+                        height: image.placement.height as i32,
+                        content: image.content,
+                        data: image.data.clone(),
+                    });
+                }
+            }
+        }
 
-                    for iy in 0..image.placement.height as i32 {
-                        for ix in 0..image.placement.width as i32 {
-                            let px = gx + ix;
-                            let py = gy + iy;
+        let render_glyphs = |pixmap: &mut PixmapMut, color: RGBA, dx: i32, dy: i32| {
+            for g in &glyphs {
+                for iy in 0..g.height {
+                    for ix in 0..g.width {
+                        let px = g.gx + ix + dx;
+                        let py = g.gy + iy + dy;
+                        if px < 0 || py < 0 || px >= pw || py >= ph {
+                            continue;
+                        }
 
-                            if px < 0
-                                || py < 0
-                                || px >= pixmap.width() as i32
-                                || py >= pixmap.height() as i32
-                            {
-                                continue;
+                        let idx = (iy * g.width + ix) as usize;
+                        let alpha = match g.content {
+                            cosmic_text::SwashContent::Mask => {
+                                g.data.get(idx).copied().unwrap_or(0)
                             }
-
-                            let idx = (iy * image.placement.width as i32 + ix) as usize;
-                            let alpha = match image.content {
-                                cosmic_text::SwashContent::Mask => {
-                                    image.data.get(idx).copied().unwrap_or(0)
-                                }
-                                cosmic_text::SwashContent::Color => {
-                                    // RGBA data, take the alpha channel.
-                                    image.data.get(idx * 4 + 3).copied().unwrap_or(0)
-                                }
-                                cosmic_text::SwashContent::SubpixelMask => {
-                                    // Use the green channel as alpha approximation.
-                                    image.data.get(idx * 3 + 1).copied().unwrap_or(0)
-                                }
-                            };
-
-                            if alpha == 0 {
-                                continue;
+                            cosmic_text::SwashContent::Color => {
+                                g.data.get(idx * 4 + 3).copied().unwrap_or(0)
                             }
-
-                            let pixel_offset =
-                                (py as u32 * pixmap.width() + px as u32) as usize * 4;
-                            let pixels = pixmap.data_mut();
-
-                            if image.content == cosmic_text::SwashContent::Color {
-                                // Use the glyph's own color (e.g., color emoji).
-                                let base = idx * 4;
-                                let sr = image.data[base];
-                                let sg = image.data[base + 1];
-                                let sb = image.data[base + 2];
-                                blend_pixel(pixels, pixel_offset, sr, sg, sb, alpha);
-                            } else {
-                                blend_pixel(pixels, pixel_offset, fg.0, fg.1, fg.2, alpha);
+                            cosmic_text::SwashContent::SubpixelMask => {
+                                g.data.get(idx * 3 + 1).copied().unwrap_or(0)
                             }
+                        };
+                        if alpha == 0 {
+                            continue;
+                        }
+
+                        let pixel_offset = (py as u32 * pw as u32 + px as u32) as usize * 4;
+                        let pixels = pixmap.data_mut();
+
+                        if g.content == cosmic_text::SwashContent::Color {
+                            let base = idx * 4;
+                            blend_pixel(
+                                pixels,
+                                pixel_offset,
+                                g.data[base],
+                                g.data[base + 1],
+                                g.data[base + 2],
+                                alpha,
+                            );
+                        } else {
+                            blend_pixel(pixels, pixel_offset, color.0, color.1, color.2, alpha);
                         }
                     }
                 }
             }
+        };
+
+        // Soft shadow: single pass offset down-right
+        if let Some(shadow_color) = outline {
+            render_glyphs(pixmap, shadow_color, 2, 1);
         }
+
+        // Foreground pass
+        render_glyphs(pixmap, fg, 0, 0);
     }
 
     pub fn fill_rect(pixmap: &mut PixmapMut, x: u32, y: u32, w: u32, h: u32, color: RGBA) {
@@ -201,6 +239,38 @@ impl Renderer {
             let mut paint = rgba_to_paint(color);
             paint.blend_mode = BlendMode::Source;
             pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+        }
+    }
+
+    /// Blit an RGBA icon onto the BGRA pixmap, centered vertically.
+    pub fn draw_icon(pixmap: &mut PixmapMut, icon: &IconData, x: u32, canvas_height: u32) {
+        if icon.width == 0 || icon.height == 0 {
+            return;
+        }
+        let y_offset = canvas_height.saturating_sub(icon.height) / 2;
+        let pw = pixmap.width() as i32;
+        let ph = pixmap.height() as i32;
+
+        for iy in 0..icon.height {
+            for ix in 0..icon.width {
+                let px = x as i32 + ix as i32;
+                let py = y_offset as i32 + iy as i32;
+                if px < 0 || py < 0 || px >= pw || py >= ph {
+                    continue;
+                }
+
+                let src_idx = ((iy * icon.width + ix) * 4) as usize;
+                let r = icon.pixels[src_idx];
+                let g = icon.pixels[src_idx + 1];
+                let b = icon.pixels[src_idx + 2];
+                let a = icon.pixels[src_idx + 3];
+                if a == 0 {
+                    continue;
+                }
+
+                let dst_offset = (py as u32 * pw as u32 + px as u32) as usize * 4;
+                blend_pixel(pixmap.data_mut(), dst_offset, r, g, b, a);
+            }
         }
     }
 
@@ -245,7 +315,7 @@ pub fn shape_powerline(
     fill: PowerlineFill,
 ) -> Polys {
     let h = height as f32;
-    let w = ((height + 1) / 2) as f32;
+    let w = height.div_ceil(2) as f32;
 
     let xl = xl as f32;
     let xr = xl + w;
@@ -254,18 +324,10 @@ pub fn shape_powerline(
 
     match (direction, fill) {
         (PowerlineDirection::Left, PowerlineFill::Full) => {
-            vec![vec![
-                (xr, yb),
-                (xl, yt + h / 2.0),
-                (xr, yt),
-            ]]
+            vec![vec![(xr, yb), (xl, yt + h / 2.0), (xr, yt)]]
         }
         (PowerlineDirection::Right, PowerlineFill::Full) => {
-            vec![vec![
-                (xl, yb),
-                (xr, yt + h / 2.0),
-                (xl, yt),
-            ]]
+            vec![vec![(xl, yb), (xr, yt + h / 2.0), (xl, yt)]]
         }
         (PowerlineDirection::Left, PowerlineFill::No) => {
             let t = 1.5f32;
@@ -317,12 +379,7 @@ pub fn shape_octagon(
         // Octagon Right: flat left edge, two angled edges meeting a vertical right side.
         //   top-left → top-right(angled) → right-side(vertical) → bottom-right(angled) → bottom-left
         (PowerlineDirection::Right, PowerlineFill::Full) => {
-            vec![vec![
-                (xl, yb),
-                (xr, yb - h_4),
-                (xr, yt + h_4),
-                (xl, yt),
-            ]]
+            vec![vec![(xl, yb), (xr, yb - h_4), (xr, yt + h_4), (xl, yt)]]
         }
         (PowerlineDirection::Right, PowerlineFill::No) => {
             let t = 2.5f32;
@@ -341,12 +398,7 @@ pub fn shape_octagon(
         }
         // Octagon Left: flat right edge, two angled edges meeting a vertical left side.
         (PowerlineDirection::Left, PowerlineFill::Full) => {
-            vec![vec![
-                (xl, yt + h_4),
-                (xl, yb - h_4),
-                (xr, yb),
-                (xr, yt),
-            ]]
+            vec![vec![(xl, yt + h_4), (xl, yb - h_4), (xr, yb), (xr, yt)]]
         }
         (PowerlineDirection::Left, PowerlineFill::No) => {
             let t = 2.5f32;
@@ -376,7 +428,7 @@ pub fn shape_circle(
 ) -> Polys {
     let h = height as f32;
     let r = h / 2.0;
-    let w = ((height + 1) / 2) as f32;
+    let w = height.div_ceil(2) as f32;
 
     let xl = xl as f32;
     let xr = xl + w;
@@ -465,14 +517,18 @@ pub fn shape_polys(
         PowerlineStyle::Powerline => shape_powerline(height, xl, direction, fill),
         PowerlineStyle::Octagon => shape_octagon(height, xl, direction, fill),
         PowerlineStyle::Circle => shape_circle(height, xl, direction, fill),
+        PowerlineStyle::Block => vec![], // No shape — just a transparent gap
+        PowerlineStyle::Fade => vec![],  // Handled separately as gradient
     }
 }
 
 pub fn powerline_width(height: u32, style: PowerlineStyle) -> u32 {
     match style {
-        PowerlineStyle::Powerline => (height + 1) / 2,
+        PowerlineStyle::Powerline => height.div_ceil(2),
         PowerlineStyle::Octagon => (height + 1) / 4,
-        PowerlineStyle::Circle => (height + 1) / 2,
+        PowerlineStyle::Circle => height.div_ceil(2),
+        PowerlineStyle::Block => 3,
+        PowerlineStyle::Fade => height / 2,
     }
 }
 
@@ -510,6 +566,126 @@ pub fn shape_spinner(height: u32, xl: u32, angle: f32) -> Polys {
     }
 
     vec![points]
+}
+
+/// Draw a filled circle centered at (cx, cy) with given radius.
+pub fn draw_filled_circle(
+    pixmap: &mut PixmapMut,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    color: RGBA,
+) {
+    use std::f32::consts::PI;
+    const SEGMENTS: u32 = 24;
+
+    let mut pb = PathBuilder::new();
+    pb.move_to(cx + radius, cy);
+    for i in 1..=SEGMENTS {
+        let angle = 2.0 * PI * i as f32 / SEGMENTS as f32;
+        pb.line_to(cx + radius * angle.cos(), cy + radius * angle.sin());
+    }
+    pb.close();
+
+    if let Some(path) = pb.finish() {
+        let paint = rgba_to_paint(color);
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+}
+
+/// Draw a pill (stadium shape): rectangle with semicircle end caps.
+pub fn draw_pill(
+    pixmap: &mut PixmapMut,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    color: RGBA,
+) {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    const SEGMENTS: u32 = 12;
+
+    let r = h / 2.0;
+    let mut pb = PathBuilder::new();
+
+    // Top edge (left to right)
+    pb.move_to(x + r, y);
+    pb.line_to(x + w - r, y);
+
+    // Right semicircle
+    for i in 1..=SEGMENTS {
+        let angle = -FRAC_PI_2 + PI * i as f32 / SEGMENTS as f32;
+        pb.line_to(x + w - r + r * angle.cos(), y + r + r * angle.sin());
+    }
+
+    // Bottom edge (right to left)
+    pb.line_to(x + r, y + h);
+
+    // Left semicircle
+    for i in 1..=SEGMENTS {
+        let angle = FRAC_PI_2 + PI * i as f32 / SEGMENTS as f32;
+        pb.line_to(x + r + r * angle.cos(), y + r + r * angle.sin());
+    }
+    pb.close();
+
+    if let Some(path) = pb.finish() {
+        let paint = rgba_to_paint(color);
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+}
+
+/// Draw a horizontal gradient rectangle from `left_color` to `right_color`.
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+pub fn fill_gradient_rect(
+    pixmap: &mut PixmapMut,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    left_color: RGBA,
+    right_color: RGBA,
+) {
+    let pw = pixmap.width() as i32;
+    let ph = pixmap.height() as i32;
+    let pixels = pixmap.data_mut();
+
+    for col in 0..w {
+        let t = if w <= 1 {
+            0.0
+        } else {
+            col as f32 / (w - 1) as f32
+        };
+        let inv = 1.0 - t;
+        let r = (f32::from(left_color.0) * inv + f32::from(right_color.0) * t) as u8;
+        let g = (f32::from(left_color.1) * inv + f32::from(right_color.1) * t) as u8;
+        let b = (f32::from(left_color.2) * inv + f32::from(right_color.2) * t) as u8;
+        let a = (f32::from(left_color.3) * inv + f32::from(right_color.3) * t) as u8;
+
+        let px = x as i32 + col as i32;
+        if px < 0 || px >= pw {
+            continue;
+        }
+        for row in 0..h {
+            let py = y as i32 + row as i32;
+            if py < 0 || py >= ph {
+                continue;
+            }
+            let offset = (py * pw + px) as usize * 4;
+            blend_pixel(pixels, offset, r, g, b, a);
+        }
+    }
 }
 
 /// Alpha-composite a single pixel.

@@ -1,21 +1,23 @@
 use tokio::task::JoinHandle;
 
 use crate::{
-    section_writer::{SectionWriter, BLUE, DARK_GREEN, DARK_GRAY, THIN_SPACE},
     error::Error,
+    section_writer::{DARK_GRAY, SectionWriter},
     state_item::{ItemAction, ItemActionReceiver, MainActionSender, StateItem},
     types::{PowerlineDirection, PowerlineStyle},
 };
 
+#[allow(dead_code)]
 pub struct WeatherIcons;
 
 impl WeatherIcons {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self
     }
 }
 
-// Current nf-weather icons used in the weather item
+#[allow(dead_code)]
 const NF_WEATHER: &[(&str, &str)] = &[
     ("sunny", "\u{e30d}"),
     ("night", "\u{e32b}"),
@@ -44,7 +46,7 @@ const NF_WEATHER: &[(&str, &str)] = &[
     ("thermo", "\u{e350}"),
 ];
 
-// nf-md (Material Design) weather-related icons
+#[allow(dead_code)]
 const NF_MD: &[(&str, &str)] = &[
     ("sunny", "\u{f0599}"),
     ("night", "\u{f0594}"),
@@ -66,7 +68,7 @@ const NF_MD: &[(&str, &str)] = &[
     ("no-wthr", "\u{f0164}"),
 ];
 
-// Unicode Emoji weather symbols (may render differently)
+#[allow(dead_code)]
 const EMOJI: &[(&str, &str)] = &[
     ("sun", "☀"),
     ("cloud", "☁"),
@@ -86,28 +88,11 @@ impl StateItem for WeatherIcons {
         writer.set_style(PowerlineStyle::Powerline);
         writer.set_direction(PowerlineDirection::Left);
 
-        // nf-weather pack (current)
-        writer.with_bg(DARK_GREEN, &|writer| {
-            writer.write(format!("nf-weather:{THIN_SPACE}"));
-            for (_label, icon) in NF_WEATHER {
-                writer.write(format!("{icon} "));
-            }
-        });
-
-        // nf-md pack
-        writer.with_bg(BLUE, &|writer| {
-            writer.write(format!("nf-md:{THIN_SPACE}"));
-            for (_label, icon) in NF_MD {
-                writer.write(format!("{icon} "));
-            }
-        });
-
-        // Emoji pack
         writer.with_bg(DARK_GRAY, &|writer| {
-            writer.write(format!("emoji:{THIN_SPACE}"));
-            for (_label, icon) in EMOJI {
-                writer.write(format!("{icon} "));
+            for (_label, icon) in NF_MD {
+                writer.write(format!(" {icon}"));
             }
+            writer.write(" ".to_string());
         });
 
         Ok(())

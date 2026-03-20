@@ -5,11 +5,9 @@ use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
     error::Error,
-    section_writer::{SectionWriter, ACCENT, DARK_GRAY, LIGHT_GRAY, WHITE},
-    state_item::{
-        ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem,
-    },
-    types::{PowerlineDirection, PowerlineStyle},
+    section_writer::{ACCENT, DARK_GRAY, GRAY, LIGHT_GRAY, SectionWriter, WHITE},
+    state_item::{ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem},
+    types::{ClickHandler, PowerlineDirection, PowerlineStyle},
 };
 
 use super::niri;
@@ -34,20 +32,42 @@ impl StateItem for Workspaces {
             .collect();
         workspaces.sort_by_key(|ws| ws.idx);
 
-        writer.set_style(PowerlineStyle::Circle);
-        writer.set_direction(PowerlineDirection::Right);
+        if workspaces.is_empty() {
+            return Ok(());
+        }
 
-        for ws in &workspaces {
-            if ws.is_focused {
-                writer.open(ACCENT, WHITE);
-            } else {
-                writer.open(DARK_GRAY, LIGHT_GRAY);
+        writer.set_style(PowerlineStyle::Circle);
+        writer.set_direction(PowerlineDirection::Left);
+        writer.open(DARK_GRAY, GRAY);
+
+        for (i, ws) in workspaces.iter().enumerate() {
+            if i > 0 {
+                writer.write_hspace(4);
             }
-            writer.write(format!(" {} ", ws.idx));
+            let ws_id = ws.id;
+            writer.set_on_click(Arc::new(move |_button| {
+                let request = niri_ipc::Request::Action(niri_ipc::Action::FocusWorkspace {
+                    reference: niri_ipc::WorkspaceReferenceArg::Id(ws_id),
+                });
+                tokio::spawn(async move {
+                    if let Err(e) = niri::niri_request(request).await {
+                        error!("Failed to focus workspace: {e}");
+                    }
+                });
+            }) as ClickHandler);
+            let (circle_color, fg) = if ws.is_focused {
+                (ACCENT, WHITE)
+            } else if ws.is_active {
+                (GRAY, WHITE)
+            } else {
+                (DARK_GRAY, LIGHT_GRAY)
+            };
+            writer.set_fg(fg);
+            writer.write_circled(format!("{}", ws.idx), circle_color);
+            writer.clear_on_click();
         }
-        if !workspaces.is_empty() {
-            writer.close();
-        }
+        writer.set_direction(PowerlineDirection::Right);
+        writer.close();
         Ok(())
     }
 
@@ -127,7 +147,10 @@ async fn handle_event(state: &SharedState, event: niri_ipc::Event) -> bool {
         }
         niri_ipc::Event::WorkspaceActivated { id, focused } => {
             let mut state = state.lock().await;
-            let output = state.iter().find(|w| w.id == id).and_then(|w| w.output.clone());
+            let output = state
+                .iter()
+                .find(|w| w.id == id)
+                .and_then(|w| w.output.clone());
             for ws in state.iter_mut() {
                 if focused {
                     ws.is_focused = ws.id == id;

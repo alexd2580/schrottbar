@@ -31,3 +31,7 @@ simplelog = "0.12"
 dirs = "5"
 unicode-segmentation = "1"
 log = "0.4"
+
+# System tray
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+png = "0.17"

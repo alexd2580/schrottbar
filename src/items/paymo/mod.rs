@@ -1,21 +1,22 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
-use log::{debug, info, warn};
 use crate::types::{PowerlineDirection, PowerlineStyle};
+use chrono::{DateTime, Utc};
+use log::debug;
 use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
-    section_writer::{SectionWriter, ACCENT_DIM},
     error::Error,
+    section_writer::{ACCENT_DIM, SectionWriter},
     state_item::{
-        wait_seconds, ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem,
+        ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem, wait_seconds,
     },
     utils::time::split_duration,
 };
 
-use self::paymo::{query_running_paymo_task, PaymoData};
+use self::paymo::{PaymoData, query_running_paymo_task};
 
+#[allow(clippy::module_inception)]
 mod paymo;
 
 type SharedData = Arc<Mutex<Option<PaymoData>>>;
@@ -79,7 +80,7 @@ async fn paymo_coroutine(
     loop {
         {
             let mut state_lock = state.lock().await;
-            let new_state = query_running_paymo_task(&*state_lock).await;
+            let new_state = query_running_paymo_task(&state_lock).await;
             if !initialized {
                 initialized = true;
                 if new_state.is_none() {

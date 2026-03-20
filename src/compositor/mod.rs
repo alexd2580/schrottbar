@@ -22,6 +22,7 @@ pub struct WindowInfo {
 }
 
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum CompositorEvent {
     WorkspaceChanged,
     WindowChanged,
@@ -31,5 +32,6 @@ pub enum CompositorEvent {
 #[async_trait::async_trait]
 pub trait CompositorModule: Send + Sync {
     async fn get_workspaces(&self) -> Result<Vec<WorkspaceInfo>, Error>;
-    async fn subscribe_events(&self) -> Result<tokio::sync::mpsc::Receiver<CompositorEvent>, Error>;
+    async fn subscribe_events(&self)
+    -> Result<tokio::sync::mpsc::Receiver<CompositorEvent>, Error>;
 }

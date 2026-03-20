@@ -1,17 +1,21 @@
 use crate::types::{
-    ContentItem, ContentShape, PowerlineDirection, PowerlineFill, PowerlineStyle, RGBA,
+    ClickHandler, ContentItem, ContentShape, IconData, PowerlineDirection, PowerlineFill,
+    PowerlineStyle, RGBA,
 };
 
 pub const WHITE: RGBA = (240, 240, 248, 255);
 pub const LIGHT_GRAY: RGBA = (210, 212, 224, 255);
 pub const GRAY: RGBA = (120, 120, 132, 255);
 pub const DARK_GRAY: RGBA = (36, 39, 52, 220);
+#[allow(dead_code)]
 pub const DARKEST_GRAY: RGBA = (24, 26, 36, 230);
 pub const BLACK: RGBA = (0, 0, 0, 0);
 pub const OPAQUE_BLACK: RGBA = (20, 20, 28, 255);
 pub const RED: RGBA = (240, 62, 62, 255);
+#[allow(dead_code)]
 pub const TOO_RED: RGBA = (255, 20, 20, 255);
 pub const DARK_GREEN: RGBA = (6, 140, 80, 255);
+#[allow(dead_code)]
 pub const GREEN: RGBA = (16, 172, 100, 255);
 pub const BLUE: RGBA = (56, 132, 244, 255);
 pub const ACCENT: RGBA = (180, 80, 220, 255);
@@ -49,10 +53,7 @@ pub fn mix_colors(value: f32, min: f32, max: f32, min_color: RGBA, max_color: RG
     )
 }
 
-pub fn mix_colors_multi(
-    value: f32,
-    reference_points: &[(f32, RGBA)],
-) -> RGBA {
+pub fn mix_colors_multi(value: f32, reference_points: &[(f32, RGBA)]) -> RGBA {
     let (mut min, mut min_color) = reference_points[0];
     for &(max, max_color) in reference_points {
         if value < max {
@@ -82,6 +83,7 @@ pub struct SectionWriter {
 
     bg: RGBA,
     fg: RGBA,
+    click_handler: Option<ClickHandler>,
 }
 
 impl SectionWriter {
@@ -93,11 +95,55 @@ impl SectionWriter {
         self.direction = direction;
     }
 
+    pub fn set_fg(&mut self, fg: RGBA) {
+        self.fg = fg;
+    }
+
+    pub fn set_on_click(&mut self, handler: ClickHandler) {
+        self.click_handler = Some(handler);
+    }
+
+    pub fn clear_on_click(&mut self) {
+        self.click_handler = None;
+    }
+
     pub fn write(&mut self, text: String) {
         self.texts.push(ContentItem {
             shape: ContentShape::Text(text),
             fg: self.fg,
             bg: self.bg,
+            on_click: self.click_handler.clone(),
+        });
+    }
+
+    pub fn write_icon(&mut self, icon: IconData) {
+        self.texts.push(ContentItem {
+            shape: ContentShape::Icon(icon),
+            fg: self.fg,
+            bg: self.bg,
+            on_click: self.click_handler.clone(),
+        });
+    }
+
+    pub fn push_raw(&mut self, item: ContentItem) {
+        self.texts.push(item);
+    }
+
+    pub fn write_hspace(&mut self, width: u32) {
+        self.texts.push(ContentItem {
+            shape: ContentShape::HSpace(width),
+            fg: self.bg,
+            bg: self.bg,
+            on_click: None,
+        });
+    }
+
+    pub fn write_circled(&mut self, text: String, circle_color: RGBA) {
+        self.texts.push(ContentItem {
+            shape: ContentShape::CircledText(text, circle_color),
+            fg: self.fg,
+            bg: self.bg,
+            on_click: self.click_handler.clone(),
         });
     }
 
@@ -106,6 +152,7 @@ impl SectionWriter {
             shape: ContentShape::Spinner(angle),
             fg: self.fg,
             bg: self.bg,
+            on_click: self.click_handler.clone(),
         });
     }
 
@@ -114,6 +161,7 @@ impl SectionWriter {
             shape: ContentShape::Powerline(self.style, fill, self.direction),
             fg: self.fg,
             bg: self.bg,
+            on_click: None, // powerline separators are not clickable
         });
     }
 
@@ -139,6 +187,7 @@ impl SectionWriter {
         self.fg = next_foreground;
     }
 
+    #[allow(dead_code)]
     pub fn open_(&mut self, next_colors: (RGBA, RGBA)) {
         self.open(next_colors.0, next_colors.1);
     }
@@ -178,6 +227,7 @@ impl Default for SectionWriter {
             direction: PowerlineDirection::Right,
             bg: BLACK,
             fg: WHITE,
+            click_handler: None,
         }
     }
 }

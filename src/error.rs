@@ -22,14 +22,22 @@ impl Display for Error {
 }
 
 impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self { Self::Io(err) }
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
 }
 impl From<tokio::task::JoinError> for Error {
-    fn from(err: tokio::task::JoinError) -> Self { Self::Tokio(err) }
+    fn from(err: tokio::task::JoinError) -> Self {
+        Self::Tokio(err)
+    }
 }
 impl From<reqwest::Error> for Error {
-    fn from(err: reqwest::Error) -> Self { Self::Reqwest(err) }
+    fn from(err: reqwest::Error) -> Self {
+        Self::Reqwest(err)
+    }
 }
 impl From<chrono::ParseError> for Error {
-    fn from(value: chrono::ParseError) -> Self { Self::ChronoParse(value) }
+    fn from(value: chrono::ParseError) -> Self {
+        Self::ChronoParse(value)
+    }
 }

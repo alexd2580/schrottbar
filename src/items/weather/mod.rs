@@ -1,21 +1,19 @@
 use std::sync::Arc;
 
+use crate::types::{PowerlineDirection, PowerlineStyle, RGBA};
 use log::debug;
-use crate::types::{
-    PowerlineDirection, PowerlineStyle, RGBA,
-};
 use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
-    section_writer::{mix_colors_multi, SectionWriter, BLUE, DARK_GREEN, RED, THIN_SPACE},
     error::Error,
+    section_writer::{BLUE, DARK_GREEN, RED, SectionWriter, THIN_SPACE, mix_colors_multi},
     state_item::{
-        wait_seconds, ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem,
+        ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem, wait_seconds,
     },
     utils::time::{duration_since_midnight, split_duration},
 };
 
-use self::wttrin::{get_weather_data, WeatherData};
+use self::wttrin::{WeatherData, get_weather_data};
 
 mod wttrin;
 
@@ -30,101 +28,52 @@ impl Weather {
 
 fn weather_icon(data: &WeatherData, since_midnight: chrono::Duration) -> &'static str {
     match data.condition_code {
-        // nf-weather-thunderstorm
-        // 389 Moderate or heavy rain in area with thunder
-        // 386 Patchy light rain in area with thunder
-        // 200 Thundery outbreaks in nearby
-        389 | 386 | 200 => "\u{e31d}",
+        // nf-md-weather_lightning (thunder)
+        389 | 386 | 200 => "\u{f059e}",
 
-        // nf-weather-showers
-        // 266 Light drizzle
-        // 263 Patchy light drizzle
-        // 293 Patchy light rain
-        // 176 Patchy rain nearby
-        // 296 Light rain
-        // 353 Light rain shower
-        266 | 263 | 293 | 176 | 296 | 353 => "\u{e319}",
+        // nf-md-weather_rainy (light rain/drizzle)
+        266 | 263 | 293 | 176 | 296 | 353 => "\u{f0597}",
 
-        // nf-weather-rain
-        // 302 Moderate rain
-        // 299 Moderate rain at times
-        // 356 Moderate or heavy rain shower
-        // 308 Heavy rain
-        // 305 Heavy rain at times
-        // 359 Torrential rain shower
-        302 | 299 | 356 | 308 | 305 | 359 => "\u{e318}",
+        // nf-md-weather_pouring (heavy rain)
+        302 | 299 | 356 | 308 | 305 | 359 => "\u{f0596}",
 
-        // nf-weather-snow
-        // 179 Patchy snow nearby
-        // 323 Patchy light snow
-        // 326 Light snow
-        // 368 Light snow showers
-        179 | 323 | 326 | 368 => "\u{e31a}",
+        // nf-md-weather_snowy (light snow)
+        179 | 323 | 326 | 368 => "\u{f0598}",
 
-        // nf-weather-snow_wind
-        // 395 Moderate or heavy snow in area with thunder
-        // 392 Patchy light snow in area with thunder
-        // 329 Patchy moderate snow
-        // 332 Moderate snow
-        // 338 Heavy snow
-        // 371 Moderate or heavy snow showers
-        // 335 Patchy heavy snow
-        // 227 Blowing snow
-        // 230 Blizzard
-        395 | 392 | 329 | 332 | 338 | 371 | 335 | 227 | 230 => "\u{e35e}",
+        // nf-md-weather_snowy_heavy (heavy snow/blizzard)
+        395 | 392 | 329 | 332 | 338 | 371 | 335 | 227 | 230 => "\u{f059a}",
 
-        // nf-weather-sleet
-        // 365 Moderate or heavy sleet showers
-        // 362 Light sleet showers
-        // 350 Ice pellets
-        // 320 Moderate or heavy sleet
-        // 317 Light sleet
-        // 185 Patchy freezing drizzle nearby
-        // 182 Patchy sleet nearby
-        // 377 Moderate or heavy showers of ice pellets
-        // 311 Light freezing rain
-        // 374 Light showers of ice pellets
-        // 284 Heavy freezing drizzle  w
-        // 281 Freezing drizzle
-        // 314 Moderate or Heavy freezing rain
-        365 | 362 | 350 | 320 | 317 | 185 | 182 | 377 | 311 | 374 | 284 | 281 | 314 => "\u{e3ad}",
+        // nf-md-weather_hail (sleet/ice)
+        365 | 362 | 350 | 320 | 317 | 185 | 182 | 377 | 311 | 374 | 284 | 281 | 314 => "\u{f0592}",
 
-        // nf-weather-fog
-        // 260 Freezing fog
-        // 248 Fog
-        // 143 Mist
-        260 | 248 | 143 => "\u{e313}",
+        // nf-md-weather_fog
+        260 | 248 | 143 => "\u{f0591}",
 
-        // nf-weather-cloud
-        // 122 Overcast
-        // 119 Cloudy
-        // 116 Partly Cloudy
-        122 | 119 | 116 => "\u{e312}",
-        // nf-weather-night_clear
-        // nf-weather-day_sunny
-        // 113 Clear/Sunny
+        // nf-md-weather_cloudy (overcast/cloudy)
+        122 | 119 => "\u{f0163}",
+
+        // nf-md-weather_partly_cloudy (partly cloudy)
+        116 => "\u{f0595}",
+
+        // nf-md-weather_sunny / nf-md-weather_night
         113 => {
             let is_day = since_midnight > data.midnight_to_sunrise
                 && since_midnight < data.midnight_to_sunset;
 
-            if is_day {
-                "\u{e30d}"
-            } else {
-                "\u{e32b}"
-            }
+            if is_day { "\u{f0599}" } else { "\u{f0594}" }
         }
-        _ => "unknown",
+        _ => "?",
     }
 }
 
 fn next_event(data: &WeatherData, since_midnight: chrono::Duration) -> (&str, chrono::Duration) {
     if since_midnight < data.midnight_to_sunrise {
-        ("\u{e34c}", data.midnight_to_sunrise - since_midnight)
+        ("\u{f059c}", data.midnight_to_sunrise - since_midnight) // nf-md-weather_sunset_up
     } else if since_midnight < data.midnight_to_sunset {
-        ("\u{e34d}", data.midnight_to_sunset - since_midnight)
+        ("\u{f059b}", data.midnight_to_sunset - since_midnight) // nf-md-weather_sunset_down
     } else {
         let since_midnight = since_midnight - chrono::Duration::days(1);
-        ("\u{e34c}", data.midnight_to_sunrise - since_midnight)
+        ("\u{f059c}", data.midnight_to_sunrise - since_midnight) // nf-md-weather_sunset_up
     }
 }
 
@@ -139,7 +88,7 @@ const WEATHER_REFERENCE_POINTS: [(f32, RGBA); 4] =
 impl StateItem for Weather {
     #[allow(clippy::cast_precision_loss)]
     async fn print(&self, writer: &mut SectionWriter, _output: &str) -> Result<(), Error> {
-        writer.set_style(PowerlineStyle::Powerline);
+        writer.set_style(PowerlineStyle::Fade);
         writer.set_direction(PowerlineDirection::Left);
 
         let state = self.0.lock().await;
@@ -150,7 +99,7 @@ impl StateItem for Weather {
                 let weather_icon = weather_icon(data, since_midnight);
 
                 writer.write(format!(
-                    "{weather_icon} {} {}{THIN_SPACE}",
+                    "{weather_icon} {} {}°C{THIN_SPACE}",
                     data.condition, data.temp
                 ));
                 writer.split();
@@ -160,7 +109,9 @@ impl StateItem for Weather {
                 writer.write(format!("{icon} in {hours:0>2}:{minutes:0>2}{THIN_SPACE}"));
             });
         } else {
-            writer.with_bg(RED, &|writer| writer.write(format!("\u{f0164}{THIN_SPACE}")));
+            writer.with_bg(RED, &|writer| {
+                writer.write(format!("\u{f0164}{THIN_SPACE}"))
+            });
         }
         Ok(())
     }

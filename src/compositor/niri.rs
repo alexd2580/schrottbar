@@ -1,6 +1,6 @@
-use tokio::sync::mpsc;
-use crate::error::Error;
 use super::{CompositorEvent, CompositorModule, WorkspaceInfo};
+use crate::error::Error;
+use tokio::sync::mpsc;
 
 pub struct NiriCompositor {
     socket_path: String,

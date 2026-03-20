@@ -1,4 +1,5 @@
 mod bar;
+#[allow(dead_code)]
 mod compositor;
 mod error;
 mod items;
@@ -16,11 +17,11 @@ use bar::Bar;
 use log::{debug, error, info};
 use section_writer::SectionWriter;
 use state_item::{
-    new_item_action_channel, new_main_action_channel, ItemAction, ItemActionSender,
-    MainActionReceiver, MainAction, StateItem,
+    ItemAction, ItemActionSender, MainAction, MainActionReceiver, StateItem,
+    new_item_action_channel, new_main_action_channel,
 };
-use types::ContentItem;
 use tokio::signal;
+use types::ContentItem;
 
 struct StateItems {
     left: Vec<Box<dyn StateItem>>,
@@ -34,24 +35,24 @@ fn init_state_items() -> StateItems {
     let workspaces = items::workspaces::Workspaces::new();
     let windows = items::windows::Windows::new();
     let paymo = items::paymo::Paymo::default();
+    let tray = items::tray::Tray::new(25);
     let pulseaudio = items::pulseaudio::Pulseaudio::new();
     let weather = items::weather::Weather::new();
     let system = System::new();
     let time = items::time::Time::new();
 
-    let weather_icons = items::weather_icons::WeatherIcons::new();
-
-    // let icons_demo = items::windows::WindowIconsDemo::new();
-
     StateItems {
-        left: vec![Box::new(workspaces)],
-        center: vec![Box::new(windows), Box::new(paymo)],
+        left: vec![
+            Box::new(workspaces),
+            Box::new(items::hspace::HSpace::new(20)),
+            Box::new(windows),
+        ],
+        center: vec![Box::new(weather), Box::new(paymo)],
         right: vec![
-            // Box::new(weather_icons),
             Box::new(pulseaudio),
-            Box::new(weather),
             Box::new(system),
             Box::new(time),
+            Box::new(tray),
         ],
     }
 }
@@ -90,7 +91,10 @@ async fn redraw(
         let right = right_writer.unwrap();
 
         let new_frame = (left, center, right);
-        if prev_frames.get(&output.name).is_some_and(|prev| prev == &new_frame) {
+        if prev_frames
+            .get(&output.name)
+            .is_some_and(|prev| prev == &new_frame)
+        {
             debug!("Skipping draw for output {} (unchanged)", output.name);
             continue;
         }
@@ -100,7 +104,6 @@ async fn redraw(
         any_drawn = true;
     }
     if any_drawn {
-        bar.present();
         bar.flush();
     }
     debug!("Redraw done");
@@ -136,8 +139,12 @@ async fn main_loop(
         };
 
         tokio::select! {
-            _events = bar.next_event() => {
-                // Handle Wayland events (configure, etc.) — bar handles them internally.
+            events = bar.next_event() => {
+                for event in events {
+                    if let crate::wayland::BarEvent::Click { surface_index, x, button } = event {
+                        bar.handle_click(surface_index, x, button);
+                    }
+                }
             }
             _ = signal::ctrl_c() => {
                 debug!("Received CTRL+C, terminating");
@@ -190,7 +197,9 @@ fn drain_redraws(
     let mut coalesced = 0u32;
     loop {
         match receiver.try_next() {
-            Some(MainAction::Redraw) => { coalesced += 1; }
+            Some(MainAction::Redraw) => {
+                coalesced += 1;
+            }
             Some(MainAction::Reinit) => {
                 *bar = Bar::new();
                 prev_frames.clear();
@@ -215,9 +224,15 @@ fn init_logger() {
         .add_filter_ignore_str("calloop")
         .build();
 
+    let level = if cfg!(debug_assertions) {
+        simplelog::LevelFilter::Debug
+    } else {
+        simplelog::LevelFilter::Info
+    };
+
     let mut loggers: Vec<Box<dyn simplelog::SharedLogger>> = Vec::new();
     loggers.push(simplelog::TermLogger::new(
-        simplelog::LevelFilter::Debug,
+        level,
         config.clone(),
         simplelog::TerminalMode::Mixed,
         simplelog::ColorChoice::Auto,
@@ -232,7 +247,7 @@ fn init_logger() {
     };
     if let Some(log_file) = log_file {
         loggers.push(simplelog::WriteLogger::new(
-            simplelog::LevelFilter::Debug,
+            level,
             config,
             log_file,
         ));

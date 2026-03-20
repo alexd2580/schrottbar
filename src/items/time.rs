@@ -1,13 +1,13 @@
+use crate::types::{PowerlineDirection, PowerlineStyle};
 use chrono::Local;
 use log::debug;
-use crate::types::{PowerlineDirection, PowerlineStyle};
 use tokio::task::JoinHandle;
 
 use crate::{
-    section_writer::{SectionWriter, ACCENT_DIM, THIN_SPACE, WHITE},
     error::Error,
+    section_writer::{ACCENT_DIM, SectionWriter, THIN_SPACE, WHITE},
     state_item::{
-        wait_seconds, ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem,
+        ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem, wait_seconds,
     },
 };
 

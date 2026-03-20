@@ -6,7 +6,7 @@
 use tiny_skia::Pixmap;
 
 use schrottbar::renderer::{self, Renderer};
-use schrottbar::types::{PowerlineDirection, PowerlineFill, RGBA};
+use schrottbar::types::{PowerlineDirection, PowerlineFill, PowerlineStyle, RGBA};
 
 const BLACK: RGBA = (0, 0, 0, 255);
 const BG1: RGBA = (40, 80, 120, 255);
@@ -14,7 +14,7 @@ const BG2: RGBA = (120, 40, 80, 255);
 
 fn main() {
     let bar_height: u32 = 10;
-    let pw = renderer::powerline_width(bar_height);
+    let pw = renderer::powerline_width(bar_height, PowerlineStyle::Powerline);
     let bar_w = 2u32;
 
     // [2px BG1] [Right Full sep] [2px BG2] [Left Full sep] [2px BG3]
@@ -30,7 +30,12 @@ fn main() {
     x += bar_w;
 
     // Forward slash: Right Full — BG1 arrow on black background
-    let polys = renderer::shape_powerline(bar_height, x, PowerlineDirection::Right, PowerlineFill::Full);
+    let polys = renderer::shape_powerline(
+        bar_height,
+        x,
+        PowerlineDirection::Right,
+        PowerlineFill::Full,
+    );
     Renderer::fill_polys(&mut pm, &polys, BG1);
     x += pw;
 
@@ -39,7 +44,8 @@ fn main() {
     x += bar_w;
 
     // Backslash: Left Full — BG2 arrow on black background
-    let polys = renderer::shape_powerline(bar_height, x, PowerlineDirection::Left, PowerlineFill::Full);
+    let polys =
+        renderer::shape_powerline(bar_height, x, PowerlineDirection::Left, PowerlineFill::Full);
     Renderer::fill_polys(&mut pm, &polys, BG2);
     x += pw;
 
@@ -48,7 +54,8 @@ fn main() {
     x += bar_w;
 
     // Forward slash: Right Sparse — BG1 arrow on black background
-    let polys = renderer::shape_powerline(bar_height, x, PowerlineDirection::Right, PowerlineFill::No);
+    let polys =
+        renderer::shape_powerline(bar_height, x, PowerlineDirection::Right, PowerlineFill::No);
     Renderer::fill_polys(&mut pm, &polys, BG1);
     x += pw;
 
@@ -57,7 +64,8 @@ fn main() {
     x += bar_w;
 
     // Backslash: Left Sparse — BG2 arrow on black background
-    let polys = renderer::shape_powerline(bar_height, x, PowerlineDirection::Left, PowerlineFill::No);
+    let polys =
+        renderer::shape_powerline(bar_height, x, PowerlineDirection::Left, PowerlineFill::No);
     Renderer::fill_polys(&mut pm, &polys, BG2);
     x += pw;
 

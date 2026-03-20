@@ -1,5 +1,4 @@
 use chrono::FixedOffset;
-use log::warn;
 use serde::Deserialize;
 
 use crate::{error::Error, utils::config};
@@ -17,6 +16,7 @@ fn read_api_key() -> Result<String, Error> {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[allow(dead_code)]
 struct PaymoUser {
     id: i64,
     name: String,
@@ -44,6 +44,7 @@ async fn request_user(api_key: &str) -> Result<PaymoUser, Error> {
 const PAYMO_BASE_URL: &str = "https://app.paymoapp.com";
 
 #[derive(Deserialize, Debug, Clone)]
+#[allow(dead_code)]
 struct PaymoEntry {
     id: i64,
     task_id: i64,
@@ -68,10 +69,11 @@ async fn request_running_entry(api_key: &str, user_id: i64) -> Result<Option<Pay
         .send()
         .await?;
     let json = response.json::<PaymoGetEntries>().await?;
-    Ok(json.entries.get(0).cloned())
+    Ok(json.entries.first().cloned())
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[allow(dead_code)]
 struct PaymoTask {
     id: i64,
     name: String,
@@ -131,11 +133,6 @@ async fn run_requests(old_data: &Option<PaymoData>) -> Result<PaymoData, Error> 
 }
 
 pub async fn query_running_paymo_task(old_data: &Option<PaymoData>) -> Option<PaymoData> {
-    match run_requests(old_data).await {
-        Ok(result) => Some(result),
-        Err(err) => {
-            // Config missing or API error — expected if paymo isn't set up.
-            None
-        }
-    }
+    // Config missing or API error — expected if paymo isn't set up.
+    (run_requests(old_data).await).ok()
 }

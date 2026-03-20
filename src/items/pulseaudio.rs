@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
+use crate::types::{ClickHandler, PowerlineDirection, PowerlineStyle};
 use log::debug;
-use crate::types::{PowerlineDirection, PowerlineStyle};
-use tokio::{sync::Mutex, task::JoinHandle};
 use tokio::process::Command;
+use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
-    section_writer::{mix_colors, SectionWriter, DARK_GREEN, RED, THIN_SPACE},
     error::Error,
+    section_writer::{DARK_GREEN, RED, SectionWriter, THIN_SPACE, mix_colors},
     state_item::{
-        wait_seconds, ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem,
+        ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem, wait_seconds,
     },
 };
 
@@ -64,11 +64,13 @@ async fn try_get_volume() -> Result<PulseaudioData, Error> {
         .await
         .map_err(|e| Error::Local(format!("pactl default-sink: {e}")))?;
 
-    let default_sink = String::from_utf8_lossy(&default_sink_out.stdout).trim().to_string();
+    let default_sink = String::from_utf8_lossy(&default_sink_out.stdout)
+        .trim()
+        .to_string();
     let sinks_str = String::from_utf8_lossy(&port_out.stdout);
 
-    let port = parse_active_port(&sinks_str, &default_sink)
-        .unwrap_or_else(|| "unknown".to_string());
+    let port =
+        parse_active_port(&sinks_str, &default_sink).unwrap_or_else(|| "unknown".to_string());
 
     Ok(PulseaudioData { port, mute, volume })
 }
@@ -93,6 +95,12 @@ impl StateItem for Pulseaudio {
         writer.set_style(PowerlineStyle::Powerline);
         writer.set_direction(PowerlineDirection::Left);
 
+        writer.set_on_click(Arc::new(|_button| {
+            tokio::spawn(async {
+                let _ = Command::new("pavucontrol").spawn();
+            });
+        }) as ClickHandler);
+
         let state = self.0.lock().await;
         if let Some(ref data) = *state {
             let vol_color = mix_colors(data.volume, 100f32, 125f32, DARK_GREEN, RED);
@@ -114,6 +122,7 @@ impl StateItem for Pulseaudio {
             writer.write(format!("{icon} {port} {volume:.0}%{THIN_SPACE}"));
             writer.close();
         }
+        writer.clear_on_click();
         Ok(())
     }
 

@@ -1,16 +1,21 @@
+use std::collections::HashMap;
+
 use log::{debug, info};
 use tiny_skia::PixmapMut;
 use tokio::io::unix::AsyncFd;
-use wayland_client::{
-    protocol::wl_shm,
-    Connection, EventQueue,
-};
+use wayland_client::{Connection, EventQueue, protocol::wl_shm};
 
 use crate::renderer::{self, Renderer};
-use crate::types::{Alignment, ContentItem, ContentShape};
+use crate::types::{Alignment, ClickHandler, ContentItem, ContentShape, PowerlineDirection, PowerlineFill, PowerlineStyle};
 use crate::wayland::{BarEvent, OutputInfo, WaylandState};
 
 use smithay_client_toolkit::shell::WaylandSurface;
+
+struct HitZone {
+    x_start: u32,
+    x_end: u32,
+    handler: ClickHandler,
+}
 
 pub struct Bar {
     height: u32,
@@ -18,6 +23,7 @@ pub struct Bar {
     conn: Connection,
     event_queue: EventQueue<WaylandState>,
     wayland: WaylandState,
+    hit_zones: HashMap<usize, Vec<HitZone>>,
 }
 
 impl Bar {
@@ -29,8 +35,12 @@ impl Bar {
         let font_size = 19.0;
         let renderer = Renderer::new(font_family, font_size);
         let height = renderer.height();
-        info!("Bar height: {height} (ascent={} descent={} padding={})",
-            renderer.ascent(), renderer.descent(), Renderer::PADDING);
+        info!(
+            "Bar height: {height} (ascent={} descent={} padding={})",
+            renderer.ascent(),
+            renderer.descent(),
+            Renderer::PADDING
+        );
 
         let qh = event_queue.handle();
         wayland.create_surfaces(&qh, height);
@@ -44,6 +54,7 @@ impl Bar {
             conn,
             event_queue,
             wayland,
+            hit_zones: HashMap::new(),
         }
     }
 
@@ -51,10 +62,12 @@ impl Bar {
         &self.wayland.outputs
     }
 
+    #[allow(dead_code)]
     pub fn height(&self) -> u32 {
         self.height
     }
 
+    #[allow(dead_code)]
     pub fn clear_monitors(&mut self) {
         for surface in &mut self.wayland.surfaces {
             if !surface.configured {
@@ -95,16 +108,30 @@ impl Bar {
         let stride = width as i32 * 4;
 
         assert_eq!(height, self.height, "bar height changed between frames");
-        assert_eq!(surface.height, height, "surface height({}) != bar height({height})", surface.height);
+        assert_eq!(
+            surface.height, height,
+            "surface height({}) != bar height({height})",
+            surface.height
+        );
 
         let expected_canvas_size = (width * height * 4) as usize;
         let (buffer, canvas) = surface
             .pool
-            .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Argb8888)
+            .create_buffer(
+                width as i32,
+                height as i32,
+                stride,
+                wl_shm::Format::Argb8888,
+            )
             .expect("Failed to create buffer");
 
-        assert_eq!(canvas.len(), expected_canvas_size,
-            "canvas size({}) != expected({})", canvas.len(), expected_canvas_size);
+        assert_eq!(
+            canvas.len(),
+            expected_canvas_size,
+            "canvas size({}) != expected({})",
+            canvas.len(),
+            expected_canvas_size
+        );
 
         // Clear to transparent (BGRA format for wl_shm Argb8888).
         canvas.fill(0x00);
@@ -117,38 +144,145 @@ impl Bar {
         assert_eq!(pixmap.width(), width, "pixmap width mismatch");
         assert_eq!(pixmap.height(), height, "pixmap height mismatch");
 
-        // Render each alignment section.
+        // Collect hit zones for this monitor.
+        let mut zones = Vec::new();
+
+        // Render each alignment section in three passes:
+        // 1. Backgrounds  2. Frames  3. Content (text, shapes)
+        // This layering lets frame outlines sit on top of backgrounds
+        // but underneath text from neighboring items.
         for (alignment, items, item_widths) in &sections {
             let total_width: u32 = item_widths.iter().sum();
 
-            let mut cursor = match alignment {
+            let start = match alignment {
                 Alignment::Left => 0u32,
                 Alignment::Center => width.saturating_sub(total_width) / 2,
                 Alignment::Right => width.saturating_sub(total_width),
             };
 
-            for (item, &w) in items.iter().zip(item_widths.iter()) {
-                Renderer::fill_rect(&mut pixmap, cursor, 0, w, height, item.bg);
+            // Pre-compute positions.
+            let positions: Vec<u32> = {
+                let mut pos = Vec::with_capacity(item_widths.len());
+                let mut cursor = start;
+                for &w in item_widths.iter() {
+                    pos.push(cursor);
+                    cursor += w;
+                }
+                pos
+            };
 
-                match &item.shape {
-                    ContentShape::Text(text) => {
-                        self.renderer
-                            .draw_text(&mut pixmap, text, item.fg, cursor, height);
-                    }
-                    ContentShape::Powerline(style, fill, direction) => {
-                        let polys =
-                            renderer::shape_polys(height, cursor, *style, *direction, *fill);
-                        Renderer::fill_polys(&mut pixmap, &polys, item.fg);
-                    }
-                    ContentShape::Spinner(angle) => {
-                        let polys = renderer::shape_spinner(height, cursor, *angle);
-                        Renderer::fill_polys(&mut pixmap, &polys, item.fg);
+            // Collect hit zones from items with click handlers.
+            for (i, (item, &w)) in items.iter().zip(item_widths.iter()).enumerate() {
+                if let Some(ref handler) = item.on_click {
+                    zones.push(HitZone {
+                        x_start: positions[i],
+                        x_end: positions[i] + w,
+                        handler: handler.clone(),
+                    });
+                }
+            }
+
+            // Pass 1: backgrounds (fades are drawn with content below)
+            for (i, (item, &w)) in items.iter().zip(item_widths.iter()).enumerate() {
+                if matches!(item.shape, ContentShape::Powerline(PowerlineStyle::Fade, PowerlineFill::Full, ..)) {
+                    continue;
+                }
+                Renderer::fill_rect(&mut pixmap, positions[i], 0, w, height, item.bg);
+            }
+
+            // Pass 2: decorations (circles/pills) drawn over backgrounds, under text
+            for (i, (item, &w)) in items.iter().zip(item_widths.iter()).enumerate() {
+                if let ContentShape::CircledText(_, circle_color) = &item.shape {
+                    if w <= height {
+                        let r = height as f32 / 2.0;
+                        let cx = positions[i] as f32 + r;
+                        renderer::draw_filled_circle(&mut pixmap, cx, r, r, *circle_color);
+                    } else {
+                        renderer::draw_pill(
+                            &mut pixmap,
+                            positions[i] as f32, 0.0,
+                            w as f32, height as f32,
+                            *circle_color,
+                        );
                     }
                 }
+            }
 
-                cursor += w;
+            // Pass 3: content (text, powerlines, spinners)
+            const SHADOW: crate::types::RGBA = (0, 0, 0, 100);
+            for (i, item) in items.iter().enumerate() {
+                match &item.shape {
+                    ContentShape::Text(text) => {
+                        self.renderer.draw_text_outlined(
+                            &mut pixmap,
+                            text,
+                            item.fg,
+                            SHADOW,
+                            positions[i],
+                            height,
+                        );
+                    }
+                    ContentShape::CircledText(text, _) => {
+                        let text_w = self.renderer.text_width(text);
+                        let x_offset = height.saturating_sub(text_w) / 2;
+                        self.renderer.draw_text_outlined(
+                            &mut pixmap,
+                            text,
+                            item.fg,
+                            SHADOW,
+                            positions[i] + x_offset,
+                            height,
+                        );
+                    }
+                    ContentShape::Powerline(style, fill, direction) => {
+                        if *style == PowerlineStyle::Fade && *fill == PowerlineFill::Full {
+                            let (left_c, right_c) = match direction {
+                                PowerlineDirection::Left => (item.bg, item.fg),
+                                PowerlineDirection::Right => (item.fg, item.bg),
+                            };
+                            let solid = if left_c.3 >= right_c.3 { left_c } else { right_c };
+                            let left = if left_c.3 >= right_c.3 {
+                                solid
+                            } else {
+                                (solid.0, solid.1, solid.2, 0)
+                            };
+                            let right = if right_c.3 >= left_c.3 {
+                                solid
+                            } else {
+                                (solid.0, solid.1, solid.2, 0)
+                            };
+                            renderer::fill_gradient_rect(
+                                &mut pixmap,
+                                positions[i], 0,
+                                item_widths[i], height,
+                                left, right,
+                            );
+                        } else if *style == PowerlineStyle::Fade {
+                            // Sparse fade: use powerline outline shape
+                            let polys = renderer::shape_polys(
+                                height, positions[i],
+                                PowerlineStyle::Powerline, *direction, *fill,
+                            );
+                            Renderer::fill_polys(&mut pixmap, &polys, item.fg);
+                        } else {
+                            let polys =
+                                renderer::shape_polys(height, positions[i], *style, *direction, *fill);
+                            Renderer::fill_polys(&mut pixmap, &polys, item.fg);
+                        }
+                    }
+                    ContentShape::Spinner(angle) => {
+                        let polys = renderer::shape_spinner(height, positions[i], *angle);
+                        Renderer::fill_polys(&mut pixmap, &polys, item.fg);
+                    }
+                    ContentShape::Icon(icon) => {
+                        Renderer::draw_icon(&mut pixmap, icon, positions[i], height);
+                    }
+                    ContentShape::HSpace(_) => {}
+                }
             }
         }
+
+        self.hit_zones.insert(monitor_index, zones);
 
         // Debug: save one frame.
         static SAVED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -156,7 +290,6 @@ impl Bar {
             let _ = std::fs::write("/tmp/schrottbar_frame.bin", pixmap.data_mut() as &[u8]);
             log::debug!("Saved BGRA frame {width}x{height}");
         }
-        drop(pixmap);
 
         // Attach buffer and commit.
         let surface = &self.wayland.surfaces[monitor_index];
@@ -170,14 +303,10 @@ impl Bar {
         surface.layer.commit();
     }
 
-    pub fn present(&self) {
-        // In the Wayland model, present is done per-surface in draw() via commit().
-        // This method exists for API compatibility — just flush.
-        self.flush();
-    }
-
     pub fn flush(&self) {
-        self.conn.flush().expect("Failed to flush Wayland connection");
+        self.conn
+            .flush()
+            .expect("Failed to flush Wayland connection");
     }
 
     pub fn dispatch_pending(&mut self) -> Vec<BarEvent> {
@@ -213,11 +342,31 @@ impl Bar {
         }
     }
 
+    pub fn handle_click(&self, surface_index: usize, x: f64, button: u32) {
+        if let Some(zones) = self.hit_zones.get(&surface_index) {
+            let x = x as u32;
+            for zone in zones {
+                if x >= zone.x_start && x < zone.x_end {
+                    debug!("Click hit zone [{}, {}) button={button}", zone.x_start, zone.x_end);
+                    (zone.handler)(button);
+                    return;
+                }
+            }
+        }
+    }
+
     fn item_width(&mut self, item: &ContentItem) -> u32 {
         match &item.shape {
             ContentShape::Text(text) => self.renderer.text_width(text),
+            ContentShape::CircledText(text, _) => {
+                let text_w = self.renderer.text_width(text);
+                let padding = self.height / 4;
+                self.height.max(text_w + padding)
+            }
             ContentShape::Powerline(style, _, _) => renderer::powerline_width(self.height, *style),
             ContentShape::Spinner(_) => renderer::spinner_size(self.height),
+            ContentShape::Icon(icon) => icon.width,
+            ContentShape::HSpace(w) => *w,
         }
     }
 }

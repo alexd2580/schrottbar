@@ -1,16 +1,14 @@
 use std::{ops::IndexMut, sync::Arc, time};
 
-use log::debug;
 use crate::types::{PowerlineDirection, PowerlineStyle};
+use log::debug;
 use sysinfo::{ComponentExt, CpuExt, SystemExt};
 use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
-    section_writer::{mix_colors, SectionWriter, DARK_GREEN, RED, THIN_SPACE, TOO_RED},
     error::Error,
-    state_item::{
-        wait_seconds, ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem,
-    },
+    section_writer::{DARK_GREEN, RED, SectionWriter, THIN_SPACE, mix_colors},
+    state_item::{ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem},
 };
 
 fn format_bytes(a: u64) -> String {
@@ -155,13 +153,21 @@ pub struct System {
 
 impl System {
     pub fn new() -> Self {
-        Self { data: Arc::new(Mutex::new(None)), overrides: None }
+        Self {
+            data: Arc::new(Mutex::new(None)),
+            overrides: None,
+        }
     }
 
+    #[allow(dead_code)]
     pub fn with_overrides(cpu_usage: f32, cpu_temp: f32, ram_usage: f32) -> Self {
         Self {
             data: Arc::new(Mutex::new(None)),
-            overrides: Some(Overrides { cpu_usage, cpu_temp, ram_usage }),
+            overrides: Some(Overrides {
+                cpu_usage,
+                cpu_temp,
+                ram_usage,
+            }),
         }
     }
 }
@@ -216,7 +222,9 @@ impl StateItem for System {
             let ram_bg = mix_colors(ram_usage, 75f32, 100f32, DARK_GREEN, RED);
             writer.with_bg(ram_bg, &|writer| {
                 if let Some((used_ram, total_ram)) = ram_formatted {
-                    writer.write(format!("󰘚 {ram_usage:.0}% ({used_ram}/{total_ram}){THIN_SPACE}"));
+                    writer.write(format!(
+                        "󰘚 {ram_usage:.0}% ({used_ram}/{total_ram}){THIN_SPACE}"
+                    ));
                 } else {
                     writer.write(format!("󰘚 {ram_usage:.0}%{THIN_SPACE}"));
                 }
@@ -266,15 +274,17 @@ async fn system_coroutine(
         };
 
         // Only request redraw when data changed or spinner is animating.
-        if (loading || updated)
-            && !main_action_sender.enqueue(MainAction::Redraw).await
-        {
+        if (loading || updated) && !main_action_sender.enqueue(MainAction::Redraw).await {
             break;
         }
 
         // While loading, tick at spinner rate for animation.
         // Once loaded, use normal 5s interval.
-        let sleep_ms = if loading { crate::utils::spinner::TICK_MS } else { 5000 };
+        let sleep_ms = if loading {
+            crate::utils::spinner::TICK_MS
+        } else {
+            5000
+        };
 
         tokio::select! {
             message = item_action_receiver.next() => {

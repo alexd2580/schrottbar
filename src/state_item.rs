@@ -5,10 +5,11 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::section_writer::SectionWriter;
 use crate::error::Error;
+use crate::section_writer::SectionWriter;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum MainAction {
     Terminate,
     Redraw,
@@ -51,6 +52,7 @@ impl MainActionReceiver {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub enum ItemAction {
     Update,
     Terminate,

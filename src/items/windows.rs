@@ -5,15 +5,12 @@ use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
     error::Error,
-    section_writer::{SectionWriter, ACCENT, DARK_GRAY, LIGHT_GRAY, WHITE},
-    state_item::{
-        ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem,
-    },
-    types::{PowerlineDirection, PowerlineStyle},
+    section_writer::{ACCENT, DARK_GRAY, GRAY, LIGHT_GRAY, SectionWriter, WHITE},
+    state_item::{ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem},
+    types::{PowerlineDirection, PowerlineStyle, RGBA},
 };
 
 use super::niri;
-
 
 #[derive(Clone)]
 struct State {
@@ -63,15 +60,28 @@ fn app_icon(app_id: Option<&str>) -> Option<&'static str> {
         _ if id.contains("vlc") || id.contains("mpv") || id.contains("celluloid") => "\u{f057c}",
         // Tools
         _ if id.contains("gimp") => "\u{e67f}",
-        _ if id.contains("nautilus") || id.contains("thunar") || id.contains("nemo") || id.contains("dolphin") => "\u{f07c}",
+        _ if id.contains("nautilus")
+            || id.contains("thunar")
+            || id.contains("nemo")
+            || id.contains("dolphin") =>
+        {
+            "\u{f07c}"
+        }
         _ if id.contains("evince") || id.contains("zathura") || id.contains("okular") => "\u{f1c1}",
         _ if id.contains("obs") => "\u{f03d}",
+        _ if id.contains("pavucontrol") => "\u{f028}",
         // Editors (GUI)
         _ if id.contains("code") && id.contains("visual") => "\u{e70c}",
         _ if id.contains("neovide") => "\u{e62b}",
         // Terminals — fall through to title-based
-        _ if id.contains("kitty") || id.contains("alacritty") || id.contains("foot")
-            || id.contains("wezterm") || id.contains("ghostty") => return None,
+        _ if id.contains("kitty")
+            || id.contains("alacritty")
+            || id.contains("foot")
+            || id.contains("wezterm")
+            || id.contains("ghostty") =>
+        {
+            return None;
+        }
         _ => return None,
     })
 }
@@ -79,18 +89,62 @@ fn app_icon(app_id: Option<&str>) -> Option<&'static str> {
 /// Website icon from browser title. Codepoints from saftladen websites config.
 fn website_icon(title_lower: &str) -> Option<&'static str> {
     Some(match () {
+        // Chat / communication
         _ if title_lower.contains("telegram") => "\u{e217}",
         _ if title_lower.contains("slack") => "\u{f198}",
+        _ if title_lower.contains("discord") => "\u{f066f}",
+        _ if title_lower.contains("whatsapp") => "\u{f232}",
+        _ if title_lower.contains("signal") => "\u{f0553}",
+        // Dev
         _ if title_lower.contains("github") => "\u{f408}",
         _ if title_lower.contains("gitlab") => "\u{f296}",
+        _ if title_lower.contains("bitbucket") => "\u{f171}",
         _ if title_lower.contains("stack overflow") => "\u{f16c}",
-        _ if title_lower.contains("youtube") => "\u{f16a}",
         _ if title_lower.contains("jira") => "\u{f0303}",
-        _ if title_lower.contains("paypal") => "\u{f1ed}",
+        _ if title_lower.contains("trello") => "\u{f181}",
+        _ if title_lower.contains("hacker news") => "\u{f1d4}",
+        _ if title_lower.contains("crates.io") => "\u{e68b}",
+        _ if title_lower.contains("docs.rs") => "\u{e68b}",
+        _ if title_lower.contains("npmjs") => "\u{e71e}",
+        _ if title_lower.contains("docker hub") => "\u{f308}",
+        // Video / media
+        _ if title_lower.contains("youtube") => "\u{f16a}",
+        _ if title_lower.contains("twitch") => "\u{f1e8}",
+        _ if title_lower.contains("spotify") => "\u{f1bc}",
+        _ if title_lower.contains("netflix") => "\u{f008}",
+        // Social
+        _ if title_lower.contains("reddit") => "\u{f281}",
+        _ if title_lower.contains("mastodon") => "\u{f0ad1}",
+        _ if title_lower.contains("linkedin") => "\u{f0e1}",
+        _ if title_lower.contains("facebook") || title_lower.contains("meta") => "\u{f09a}",
+        _ if title_lower.contains("instagram") => "\u{f16d}",
+        _ if title_lower.contains("twitter") || title_lower.contains("/ x") => "\u{f099}",
+        _ if title_lower.contains("pinterest") => "\u{f0d2}",
+        _ if title_lower.contains("medium") => "\u{f23a}",
+        // Productivity
+        _ if title_lower.contains("notion") => "\u{e6b1}",
+        _ if title_lower.contains("figma") => "\u{e6b0}",
+        _ if title_lower.contains("dropbox") => "\u{f16b}",
+        _ if title_lower.contains("google docs") || title_lower.contains("google sheets") => {
+            "\u{f0219}"
+        }
+        _ if title_lower.contains("google drive") => "\u{f0e43}",
+        _ if title_lower.contains("google maps") => "\u{f05f5}",
+        _ if title_lower.contains("google calendar") || title_lower.contains("calendar") => {
+            "\u{f073}"
+        }
+        _ if title_lower.contains("google translate") => "\u{f0f14}",
         _ if title_lower.contains("gmail") => "\u{f02ab}",
+        _ if title_lower.contains("proton") => "\u{f023}",
+        // Shopping / services
+        _ if title_lower.contains("paypal") => "\u{f1ed}",
         _ if title_lower.contains("amazon") => "\u{f270}",
-        _ if title_lower.contains("google") => "\u{f1a0}",
+        _ if title_lower.contains("wikipedia") => "\u{f266}",
+        // Cloud
         _ if title_lower.contains("azure") => "\u{ebd8}",
+        _ if title_lower.contains("aws") => "\u{f270}",
+        // Generic — keep google last as many titles contain "google"
+        _ if title_lower.contains("google") => "\u{f1a0}",
         _ => return None,
     })
 }
@@ -104,8 +158,18 @@ fn lang_icon(title_lower: &str) -> Option<&'static str> {
         _ if title_lower.contains(".js") || title_lower.contains(".jsx") => "\u{e74e}",
         _ if title_lower.contains(".lua") => "\u{f08b1}",
         _ if title_lower.contains(".html") => "\u{f13b}",
-        _ if title_lower.contains(".hpp") || title_lower.contains(".cpp") || title_lower.contains(".cc") => "\u{e646}",
-        _ if title_lower.contains(".h") || title_lower.contains(".c ") || title_lower.ends_with(".c") => "\u{f0671}",
+        _ if title_lower.contains(".hpp")
+            || title_lower.contains(".cpp")
+            || title_lower.contains(".cc") =>
+        {
+            "\u{e646}"
+        }
+        _ if title_lower.contains(".h")
+            || title_lower.contains(".c ")
+            || title_lower.ends_with(".c") =>
+        {
+            "\u{f0671}"
+        }
         _ if title_lower.contains(".go") => "\u{e627}",
         _ if title_lower.contains(".json") => "\u{e60b}",
         _ if title_lower.contains(".sh") || title_lower.contains(".zsh") => "\u{e691}",
@@ -115,35 +179,76 @@ fn lang_icon(title_lower: &str) -> Option<&'static str> {
     })
 }
 
+const TERMINAL_IDS: &[&str] = &[
+    "kitty",
+    "alacritty",
+    "foot",
+    "wezterm",
+    "ghostty",
+    "terminator",
+    "gnome-terminal",
+    "konsole",
+    "xterm",
+    "urxvt",
+    "st",
+];
+
+fn is_terminal(app_id: Option<&str>) -> bool {
+    app_id.is_some_and(|id| {
+        let id = id.to_lowercase();
+        TERMINAL_IDS.iter().any(|t| id.contains(t))
+    })
+}
+
 /// Title-based icon for terminal windows and other apps without app_id icons.
 /// Codepoints from saftladen programs config.
-fn title_icon(title: &str) -> &'static str {
+fn title_icon(app_id: Option<&str>, title: &str) -> String {
     let lower = title.to_lowercase();
 
     // Editor detection (vim/nvim in terminal title)
-    if lower.starts_with("nvim") || lower.contains(" - nvim") || lower.contains("[nvim]")
-        || lower.starts_with("vim") || lower.contains(" - vim")
+    if lower.starts_with("nvim")
+        || lower.contains(" - nvim")
+        || lower.contains("[nvim]")
+        || lower.starts_with("vim")
+        || lower.contains(" - vim")
     {
-        if let Some(icon) = lang_icon(&lower) {
-            return icon;
-        }
-        return "\u{e62b}";  // vim
+        let vim = "\u{e62b}";
+        return if let Some(lang) = lang_icon(&lower) {
+            format!("{vim}{lang}")
+        } else {
+            vim.to_string()
+        };
     }
 
     // Programs
-    if lower.contains("htop") { return "\u{f0e4}"; }
-    if lower.contains("cargo") { return "\u{e68b}"; }
-    if lower.contains("make") { return "\u{f423}"; }
-    if lower.contains("docker") { return "\u{f308}"; }
-    if lower.contains("kube") { return "\u{f10fe}"; }
-    if lower.contains("npm") { return "\u{e71e}"; }
-    if lower.contains("node") { return "\u{f0399}"; }
-    if lower.contains("psql") { return "\u{e76e}"; }
-    if lower.contains("man ") || lower.starts_with("man") { return "\u{f15c}"; }
-    if lower.contains("gdb") { return "\u{f423}"; }
-
-    // Generic terminal / zsh prompt
-    "\u{f120}"
+    let icon = if lower.contains("volume control") {
+        "\u{f028}"
+    } else if lower.contains("htop") {
+        "\u{f0e4}"
+    } else if lower.contains("cargo") {
+        "\u{e68b}"
+    } else if lower.contains("make") {
+        "\u{f423}"
+    } else if lower.contains("docker") {
+        "\u{f308}"
+    } else if lower.contains("kube") {
+        "\u{f10fe}"
+    } else if lower.contains("npm") {
+        "\u{e71e}"
+    } else if lower.contains("node") {
+        "\u{f0399}"
+    } else if lower.contains("psql") {
+        "\u{e76e}"
+    } else if lower.contains("man ") || lower.starts_with("man") {
+        "\u{f15c}"
+    } else if lower.contains("gdb") {
+        "\u{f423}"
+    } else if is_terminal(app_id) {
+        "\u{f120}" // terminal prompt
+    } else {
+        "\u{f2d0}" // generic window
+    };
+    icon.to_string()
 }
 
 fn window_label(app_id: Option<&str>, title: &str) -> String {
@@ -156,31 +261,68 @@ fn window_label(app_id: Option<&str>, title: &str) -> String {
             if let Some(site_icon) = website_icon(&title_lower) {
                 return format!("{icon}{site_icon}");
             }
-            // Unknown site — show browser icon + page title
-            let page = title
-                .rsplit_once(" — ")
-                .or_else(|| title.rsplit_once(" - "))
-                .map(|(page, _)| page)
-                .unwrap_or(title);
-            return format!("{icon} {}", shorten_chars(page, 25));
+            // Unknown site — browser icon only
+            return icon.to_string();
         }
         // Known app — icon only
         return icon.to_string();
     }
 
     // Title-based icon (terminals, unknown apps)
-    let icon = title_icon(title);
-    icon.to_string()
+    title_icon(app_id, title)
 }
 
-fn shorten_chars(text: &str, max_len: usize) -> String {
-    if text.chars().count() <= max_len {
-        text.to_string()
-    } else {
-        let mut s: String = text.chars().take(max_len - 1).collect();
-        s.push('…');
-        s
+/// A column in niri's scrolling layout.
+struct Column<'a> {
+    tiles: Vec<&'a niri_ipc::Window>,
+    /// This column contains the workspace's focused window.
+    is_workspace_focused: bool,
+}
+
+/// Group windows into columns based on layout position.
+/// `active_window_id` is the workspace's active window (from niri_ipc::Workspace).
+fn build_columns<'a>(
+    windows: &[&'a niri_ipc::Window],
+    active_window_id: Option<u64>,
+) -> Vec<Column<'a>> {
+    use std::collections::BTreeMap;
+    let mut columns: BTreeMap<usize, Column<'a>> = BTreeMap::new();
+    let mut floating: Vec<&'a niri_ipc::Window> = Vec::new();
+
+    for &win in windows {
+        if let Some((col_idx, _tile_idx)) = win.layout.pos_in_scrolling_layout {
+            let col = columns.entry(col_idx).or_insert_with(|| Column {
+                tiles: Vec::new(),
+                is_workspace_focused: false,
+            });
+            col.tiles.push(win);
+            if active_window_id == Some(win.id) {
+                col.is_workspace_focused = true;
+            }
+        } else {
+            floating.push(win);
+        }
     }
+
+    for col in columns.values_mut() {
+        col.tiles.sort_by_key(|w| {
+            w.layout
+                .pos_in_scrolling_layout
+                .map(|(_, t)| t)
+                .unwrap_or(0)
+        });
+    }
+
+    let mut result: Vec<Column<'a>> = columns.into_values().collect();
+
+    for win in floating {
+        result.push(Column {
+            tiles: vec![win],
+            is_workspace_focused: active_window_id == Some(win.id),
+        });
+    }
+
+    result
 }
 
 #[async_trait::async_trait]
@@ -188,38 +330,78 @@ impl StateItem for Windows {
     async fn print(&self, writer: &mut SectionWriter, output: &str) -> Result<(), Error> {
         let state = self.0.lock().await;
 
-        // Find the active workspace for this output
-        let active_ws = state.workspaces.iter().find(|ws| {
-            ws.output.as_deref() == Some(output) && ws.is_active
-        });
-        let Some(active_ws) = active_ws else {
-            return Ok(());
-        };
-
-        writer.set_style(PowerlineStyle::Octagon);
-        writer.set_direction(PowerlineDirection::Right);
-
-        let mut windows: Vec<&niri_ipc::Window> = state
-            .windows
+        // Find workspaces for this output, sorted by index
+        let mut workspaces: Vec<&niri_ipc::Workspace> = state
+            .workspaces
             .iter()
-            .filter(|w| w.workspace_id == Some(active_ws.id))
+            .filter(|ws| ws.output.as_deref() == Some(output))
             .collect();
-        windows.sort_by_key(|w| w.id);
+        workspaces.sort_by_key(|ws| ws.idx);
 
-        for win in &windows {
-            let title = win.title.as_deref().unwrap_or("?");
-            let label = window_label(win.app_id.as_deref(), title);
-
-            if win.is_focused {
-                writer.open(ACCENT, WHITE);
-            } else {
-                writer.open(DARK_GRAY, LIGHT_GRAY);
+        // Collect all columns across visible workspaces
+        let mut all_columns: Vec<(String, Option<RGBA>)> = Vec::new();
+        for ws in workspaces.iter().filter(|ws| ws.is_active) {
+            let mut windows: Vec<&niri_ipc::Window> = state
+                .windows
+                .iter()
+                .filter(|w| w.workspace_id == Some(ws.id))
+                .collect();
+            if windows.is_empty() {
+                continue;
             }
-            writer.write(format!(" {label} "));
+            windows.sort_by_key(|w| w.id);
+
+            let columns = build_columns(&windows, ws.active_window_id);
+
+            for col in &columns {
+                let frame_color = if col.is_workspace_focused && ws.is_focused {
+                    Some(ACCENT)
+                } else if col.is_workspace_focused {
+                    Some(GRAY)
+                } else {
+                    None
+                };
+
+                let content = if col.tiles.len() == 1 {
+                    let title = col.tiles[0].title.as_deref().unwrap_or("?");
+                    window_label(col.tiles[0].app_id.as_deref(), title)
+                } else {
+                    let active = col
+                        .tiles
+                        .iter()
+                        .find(|w| ws.active_window_id == Some(w.id))
+                        .unwrap_or(&col.tiles[0]);
+                    let title = active.title.as_deref().unwrap_or("?");
+                    let label = window_label(active.app_id.as_deref(), title);
+                    format!("\u{f0328}{}{label}", col.tiles.len())
+                };
+
+                all_columns.push((content, frame_color));
+            }
         }
-        if !windows.is_empty() {
-            writer.close();
+
+        if all_columns.is_empty() {
+            return Ok(());
         }
+
+        writer.set_style(PowerlineStyle::Circle);
+        writer.set_direction(PowerlineDirection::Left);
+        writer.open(DARK_GRAY, LIGHT_GRAY);
+
+        for (i, (content, frame_color)) in all_columns.iter().enumerate() {
+            if i > 0 {
+                writer.write_hspace(4);
+            }
+            let (circle_color, fg) = if let Some(color) = frame_color {
+                (*color, WHITE)
+            } else {
+                (DARK_GRAY, LIGHT_GRAY)
+            };
+            writer.set_fg(fg);
+            writer.write_circled(content.clone(), circle_color);
+        }
+        writer.set_direction(PowerlineDirection::Right);
+        writer.close();
         Ok(())
     }
 
@@ -310,11 +492,17 @@ async fn windows_coroutine(
 async fn handle_event(state: &SharedState, event: niri_ipc::Event) -> bool {
     match event {
         niri_ipc::Event::WindowsChanged { windows } => {
-            state.lock().await.windows = windows;
+            let mut s = state.lock().await;
+            s.windows = windows;
+
             true
         }
         niri_ipc::Event::WindowOpenedOrChanged { window } => {
             let mut s = state.lock().await;
+            debug!(
+                "WindowOpenedOrChanged: id={} app_id={:?} pos={:?}",
+                window.id, window.app_id, window.layout.pos_in_scrolling_layout
+            );
             if let Some(existing) = s.windows.iter_mut().find(|w| w.id == window.id) {
                 *existing = window;
             } else {
@@ -328,6 +516,19 @@ async fn handle_event(state: &SharedState, event: niri_ipc::Event) -> bool {
         }
         niri_ipc::Event::WindowFocusChanged { id } => {
             let mut s = state.lock().await;
+            // Update active_window_id on the workspace that contains the newly focused window
+            if let Some(id) = id {
+                let ws_id = s
+                    .windows
+                    .iter()
+                    .find(|w| w.id == id)
+                    .and_then(|w| w.workspace_id);
+                if let Some(ws_id) = ws_id
+                    && let Some(ws) = s.workspaces.iter_mut().find(|ws| ws.id == ws_id)
+                {
+                    ws.active_window_id = Some(id);
+                }
+            }
             for w in s.windows.iter_mut() {
                 w.is_focused = Some(w.id) == id;
             }
@@ -339,7 +540,11 @@ async fn handle_event(state: &SharedState, event: niri_ipc::Event) -> bool {
         }
         niri_ipc::Event::WorkspaceActivated { id, focused } => {
             let mut s = state.lock().await;
-            let output = s.workspaces.iter().find(|w| w.id == id).and_then(|w| w.output.clone());
+            let output = s
+                .workspaces
+                .iter()
+                .find(|w| w.id == id)
+                .and_then(|w| w.output.clone());
             for ws in s.workspaces.iter_mut() {
                 if focused {
                     ws.is_focused = ws.id == id;
@@ -350,102 +555,28 @@ async fn handle_event(state: &SharedState, event: niri_ipc::Event) -> bool {
             }
             true
         }
-        _ => false,
-    }
-}
-
-// -- Demo item showing all window icons --
-
-const ALL_ICONS: &[(&str, &str)] = &[
-    // App icons
-    ("firefox", "\u{f269}"),
-    ("chrome", "\u{f268}"),
-    ("discord", "\u{f066f}"),
-    ("telegram", "\u{e217}"),
-    ("slack", "\u{f198}"),
-    ("mumble", "\u{f130}"),
-    ("irssi", "\u{f292}"),
-    ("spotify", "\u{f1bc}"),
-    ("steam", "\u{ed29}"),
-    ("vlc", "\u{f057c}"),
-    ("gimp", "\u{e67f}"),
-    ("vscode", "\u{e70c}"),
-    ("vim", "\u{e62b}"),
-    // Website icons
-    ("github", "\u{f408}"),
-    ("gitlab", "\u{f296}"),
-    ("SO", "\u{f16c}"),
-    ("youtube", "\u{f16a}"),
-    ("jira", "\u{f0303}"),
-    ("paypal", "\u{f1ed}"),
-    ("gmail", "\u{f02ab}"),
-    ("amazon", "\u{f270}"),
-    ("google", "\u{f1a0}"),
-    ("azure", "\u{ebd8}"),
-    // Language icons
-    ("rust", "\u{e68b}"),
-    ("python", "\u{e235}"),
-    ("ts", "\u{f06e6}"),
-    ("js", "\u{e74e}"),
-    ("lua", "\u{f08b1}"),
-    ("html", "\u{f13b}"),
-    ("c++", "\u{e646}"),
-    ("c", "\u{f0671}"),
-    ("go", "\u{e627}"),
-    ("json", "\u{e60b}"),
-    ("shell", "\u{e691}"),
-    ("nix", "\u{f1105}"),
-    ("docker", "\u{f308}"),
-    // Program icons
-    ("htop", "\u{f0e4}"),
-    ("make", "\u{f423}"),
-    ("kube", "\u{f10fe}"),
-    ("npm", "\u{e71e}"),
-    ("node", "\u{f0399}"),
-    ("psql", "\u{e76e}"),
-    ("man", "\u{f15c}"),
-    ("zsh", "\u{f120}"),
-];
-
-pub struct WindowIconsDemo;
-
-impl WindowIconsDemo {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-#[async_trait::async_trait]
-impl StateItem for WindowIconsDemo {
-    async fn print(&self, writer: &mut SectionWriter, _output: &str) -> Result<(), Error> {
-        writer.set_style(PowerlineStyle::Octagon);
-        writer.set_direction(PowerlineDirection::Right);
-
-        writer.open(DARK_GRAY, LIGHT_GRAY);
-        for (_label, icon) in ALL_ICONS {
-            writer.write(format!(" {icon}"));
-        }
-        writer.write(" ".to_string());
-        writer.close();
-        Ok(())
-    }
-
-    fn start_coroutine(
-        &self,
-        _main_action_sender: MainActionSender,
-        mut item_action_receiver: ItemActionReceiver,
-    ) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    message = item_action_receiver.next() => {
-                        match message {
-                            None | Some(ItemAction::Update) => {}
-                            Some(ItemAction::Terminate) => break,
-                        }
-                    }
+        niri_ipc::Event::WindowLayoutsChanged { changes } => {
+            let mut s = state.lock().await;
+            for (id, layout) in changes {
+                if let Some(win) = s.windows.iter_mut().find(|w| w.id == id) {
+                    win.layout = layout;
                 }
             }
-        })
+            true
+        }
+        niri_ipc::Event::WorkspaceActiveWindowChanged {
+            workspace_id,
+            active_window_id,
+        } => {
+            let mut s = state.lock().await;
+            if let Some(ws) = s.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
+                ws.active_window_id = active_window_id;
+            }
+            true
+        }
+        other => {
+            debug!("Unhandled niri event: {other:?}");
+            false
+        }
     }
 }
