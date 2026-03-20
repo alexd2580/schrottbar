@@ -6,7 +6,7 @@ use crate::types::{
 pub const WHITE: RGBA = (240, 240, 248, 255);
 pub const LIGHT_GRAY: RGBA = (210, 212, 224, 255);
 pub const GRAY: RGBA = (120, 120, 132, 255);
-pub const DARK_GRAY: RGBA = (36, 39, 52, 220);
+pub const DARK_GRAY: RGBA = (50, 54, 68, 220);
 #[allow(dead_code)]
 pub const DARKEST_GRAY: RGBA = (24, 26, 36, 230);
 pub const BLACK: RGBA = (0, 0, 0, 0);
@@ -19,7 +19,7 @@ pub const DARK_GREEN: RGBA = (6, 140, 80, 255);
 pub const GREEN: RGBA = (16, 172, 100, 255);
 pub const BLUE: RGBA = (56, 132, 244, 255);
 pub const ACCENT: RGBA = (180, 80, 220, 255);
-pub const ACCENT_DIM: RGBA = (100, 80, 220, 255);
+pub const ACCENT_DIM: RGBA = (120, 96, 230, 255);
 
 pub const THIN_SPACE: &str = "\u{2009}";
 
@@ -141,6 +141,15 @@ impl SectionWriter {
     pub fn write_circled(&mut self, text: String, circle_color: RGBA) {
         self.texts.push(ContentItem {
             shape: ContentShape::CircledText(text, circle_color),
+            fg: self.fg,
+            bg: self.bg,
+            on_click: self.click_handler.clone(),
+        });
+    }
+
+    pub fn write_ringed(&mut self, text: String, ring_color: RGBA) {
+        self.texts.push(ContentItem {
+            shape: ContentShape::RingedText(text, ring_color),
             fg: self.fg,
             bg: self.bg,
             on_click: self.click_handler.clone(),

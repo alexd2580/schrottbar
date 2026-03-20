@@ -53,6 +53,8 @@ pub enum ContentShape {
     Text(String),
     /// Text centered inside a filled circle. The RGBA is the circle color.
     CircledText(String, RGBA),
+    /// Text centered inside a circle outline (ring). The RGBA is the ring color.
+    RingedText(String, RGBA),
     Powerline(PowerlineStyle, PowerlineFill, PowerlineDirection),
     /// A spinning arc. The f32 is the rotation angle in radians.
     Spinner(f32),

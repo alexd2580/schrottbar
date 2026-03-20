@@ -312,11 +312,29 @@ fn scale_rgba(rgba: &[u8], sw: u32, sh: u32, target_height: u32) -> Option<IconD
 /// Try to find an icon file by name in a theme path directory.
 fn find_icon_in_theme_path(theme_path: &str, icon_name: &str) -> Option<std::path::PathBuf> {
     let dir = Path::new(theme_path);
-    // Try common extensions.
     for ext in &["png", "svg", "xpm"] {
         let path = dir.join(format!("{icon_name}.{ext}"));
         if path.exists() {
             return Some(path);
+        }
+    }
+    None
+}
+
+/// Search standard icon theme directories for a named icon (PNG only).
+/// Prefers larger sizes for better scaling quality.
+fn find_icon_in_system(icon_name: &str) -> Option<std::path::PathBuf> {
+    // Prefer larger sizes first for better downscaling quality.
+    const SIZES: &[&str] = &["256x256", "128x128", "96x96", "72x72", "64x64", "48x48", "32x32", "24x24", "22x22", "16x16"];
+    const CATEGORIES: &[&str] = &["status", "apps", "devices", "actions", "places"];
+    let theme_dir = Path::new("/usr/share/icons/hicolor");
+
+    for size in SIZES {
+        for cat in CATEGORIES {
+            let path = theme_dir.join(size).join(cat).join(format!("{icon_name}.png"));
+            if path.exists() {
+                return Some(path);
+            }
         }
     }
     None
@@ -447,6 +465,12 @@ async fn fetch_item(conn: &Connection, service: &str, icon_height: u32) -> Optio
         if !name.is_empty() && !theme_path.is_empty()
             && let Some(file_path) = find_icon_in_theme_path(&theme_path, &name) {
                 debug!("Tray item {service}: loading icon from {}", file_path.display());
+                icon = load_png_icon(&file_path, icon_height);
+            }
+
+        if icon.is_none() && !name.is_empty()
+            && let Some(file_path) = find_icon_in_system(&name) {
+                debug!("Tray item {service}: loading system icon from {}", file_path.display());
                 icon = load_png_icon(&file_path, icon_height);
             }
 

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::types::{PowerlineDirection, PowerlineStyle, RGBA};
-use log::debug;
+use log::{debug, info};
+use serde::Deserialize;
 use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
@@ -13,9 +14,65 @@ use crate::{
     utils::time::{duration_since_midnight, split_duration},
 };
 
-use self::wttrin::{WeatherData, get_weather_data};
-
+mod openmeteo;
 mod wttrin;
+
+/// Shared weather data produced by any provider.
+#[derive(Debug)]
+pub struct WeatherData {
+    pub temp: i32,
+    /// WMO weather interpretation code (0–99).
+    pub wmo_code: u32,
+    pub condition: String,
+    pub midnight_to_sunrise: chrono::Duration,
+    pub midnight_to_sunset: chrono::Duration,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Location {
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// Resolve location via IP geolocation (ip-api.com, no API key needed).
+async fn geolocate() -> Option<Location> {
+    #[derive(Deserialize)]
+    struct GeoResponse {
+        lat: f64,
+        lon: f64,
+    }
+
+    let resp = reqwest::Client::default()
+        .get("http://ip-api.com/json/?fields=lat,lon")
+        .timeout(std::time::Duration::new(3, 0))
+        .send()
+        .await
+        .ok()?;
+    let geo: GeoResponse = resp.json().await.ok()?;
+    info!("Geolocation: {:.2}, {:.2}", geo.lat, geo.lon);
+    Some(Location {
+        lat: geo.lat,
+        lon: geo.lon,
+    })
+}
+
+/// Fetch weather from all providers in parallel, return the first success.
+async fn fetch_weather() -> Option<WeatherData> {
+    let (a, b) = tokio::join!(wttrin::get_weather_data(), async {
+        let location = geolocate().await;
+        openmeteo::get_weather_data(location).await
+    });
+    // Prefer open-meteo (no IP-based geolocation quirks), fall back to wttr.in.
+    if b.is_some() {
+        info!("Weather from open-meteo");
+        b
+    } else if a.is_some() {
+        info!("Weather from wttr.in");
+        a
+    } else {
+        None
+    }
+}
 
 type SharedData = Arc<Mutex<Option<WeatherData>>>;
 pub struct Weather(SharedData);
@@ -27,53 +84,45 @@ impl Weather {
 }
 
 fn weather_icon(data: &WeatherData, since_midnight: chrono::Duration) -> &'static str {
-    match data.condition_code {
-        // nf-md-weather_lightning (thunder)
-        389 | 386 | 200 => "\u{f059e}",
-
-        // nf-md-weather_rainy (light rain/drizzle)
-        266 | 263 | 293 | 176 | 296 | 353 => "\u{f0597}",
-
-        // nf-md-weather_pouring (heavy rain)
-        302 | 299 | 356 | 308 | 305 | 359 => "\u{f0596}",
-
-        // nf-md-weather_snowy (light snow)
-        179 | 323 | 326 | 368 => "\u{f0598}",
-
-        // nf-md-weather_snowy_heavy (heavy snow/blizzard)
-        395 | 392 | 329 | 332 | 338 | 371 | 335 | 227 | 230 => "\u{f059a}",
-
-        // nf-md-weather_hail (sleet/ice)
-        365 | 362 | 350 | 320 | 317 | 185 | 182 | 377 | 311 | 374 | 284 | 281 | 314 => "\u{f0592}",
-
-        // nf-md-weather_fog
-        260 | 248 | 143 => "\u{f0591}",
-
-        // nf-md-weather_cloudy (overcast/cloudy)
-        122 | 119 => "\u{f0163}",
-
-        // nf-md-weather_partly_cloudy (partly cloudy)
-        116 => "\u{f0595}",
-
-        // nf-md-weather_sunny / nf-md-weather_night
-        113 => {
+    match data.wmo_code {
+        // Clear / sunny
+        0 | 1 => {
             let is_day = since_midnight > data.midnight_to_sunrise
                 && since_midnight < data.midnight_to_sunset;
-
-            if is_day { "\u{f0599}" } else { "\u{f0594}" }
+            if is_day { "\u{f0599}" } else { "\u{f0594}" } // sunny / night
         }
+        // Partly cloudy
+        2 => "\u{f0595}",
+        // Overcast
+        3 => "\u{f0163}",
+        // Fog
+        45 | 48 => "\u{f0591}",
+        // Drizzle
+        51 | 53 | 55 | 56 | 57 => "\u{f0597}",
+        // Rain (light/moderate)
+        61 | 63 | 80 | 81 => "\u{f0597}",
+        // Rain (heavy)
+        65 | 82 => "\u{f0596}",
+        // Freezing rain
+        66 | 67 => "\u{f0592}",
+        // Snow (light)
+        71 | 77 | 85 => "\u{f0598}",
+        // Snow (heavy)
+        73 | 75 | 86 => "\u{f059a}",
+        // Thunderstorm
+        95 | 96 | 99 => "\u{f059e}",
         _ => "?",
     }
 }
 
 fn next_event(data: &WeatherData, since_midnight: chrono::Duration) -> (&str, chrono::Duration) {
     if since_midnight < data.midnight_to_sunrise {
-        ("\u{f059c}", data.midnight_to_sunrise - since_midnight) // nf-md-weather_sunset_up
+        ("\u{f059c}", data.midnight_to_sunrise - since_midnight)
     } else if since_midnight < data.midnight_to_sunset {
-        ("\u{f059b}", data.midnight_to_sunset - since_midnight) // nf-md-weather_sunset_down
+        ("\u{f059b}", data.midnight_to_sunset - since_midnight)
     } else {
         let since_midnight = since_midnight - chrono::Duration::days(1);
-        ("\u{f059c}", data.midnight_to_sunrise - since_midnight) // nf-md-weather_sunset_up
+        ("\u{f059c}", data.midnight_to_sunrise - since_midnight)
     }
 }
 
@@ -136,7 +185,7 @@ async fn weather_coroutine(
 ) {
     loop {
         {
-            let new_state = get_weather_data().await;
+            let new_state = fetch_weather().await;
             let mut state_lock = state.lock().await;
             *state_lock = new_state;
             if !main_action_sender.enqueue(MainAction::Redraw).await {

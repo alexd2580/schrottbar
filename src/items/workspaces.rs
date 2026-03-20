@@ -55,6 +55,7 @@ impl StateItem for Workspaces {
                     }
                 });
             }) as ClickHandler);
+            let is_empty = ws.active_window_id.is_none();
             let (circle_color, fg) = if ws.is_focused {
                 (ACCENT, WHITE)
             } else if ws.is_active {
@@ -63,7 +64,12 @@ impl StateItem for Workspaces {
                 (DARK_GRAY, LIGHT_GRAY)
             };
             writer.set_fg(fg);
-            writer.write_circled(format!("{}", ws.idx), circle_color);
+            let label = format!("{}", ws.idx);
+            if is_empty {
+                writer.write_ringed(label, circle_color);
+            } else {
+                writer.write_circled(label, circle_color);
+            }
             writer.clear_on_click();
         }
         writer.set_direction(PowerlineDirection::Right);

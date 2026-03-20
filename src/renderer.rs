@@ -646,6 +646,123 @@ pub fn draw_pill(
     }
 }
 
+/// Draw a circle outline (ring) centered at (cx, cy).
+pub fn draw_ring(
+    pixmap: &mut PixmapMut,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    thickness: f32,
+    color: RGBA,
+) {
+    use std::f32::consts::PI;
+    const SEGMENTS: u32 = 24;
+
+    let r_outer = radius;
+    let r_inner = radius - thickness;
+    if r_inner <= 0.0 {
+        return draw_filled_circle(pixmap, cx, cy, radius, color);
+    }
+
+    let mut pb = PathBuilder::new();
+
+    // Outer circle
+    pb.move_to(cx + r_outer, cy);
+    for i in 1..=SEGMENTS {
+        let angle = 2.0 * PI * i as f32 / SEGMENTS as f32;
+        pb.line_to(cx + r_outer * angle.cos(), cy + r_outer * angle.sin());
+    }
+    pb.close();
+
+    // Inner circle (winding creates a hole)
+    pb.move_to(cx + r_inner, cy);
+    for i in (0..SEGMENTS).rev() {
+        let angle = 2.0 * PI * i as f32 / SEGMENTS as f32;
+        pb.line_to(cx + r_inner * angle.cos(), cy + r_inner * angle.sin());
+    }
+    pb.close();
+
+    if let Some(path) = pb.finish() {
+        let paint = rgba_to_paint(color);
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::EvenOdd,
+            Transform::identity(),
+            None,
+        );
+    }
+}
+
+/// Draw a pill outline (stadium ring shape).
+pub fn draw_pill_ring(
+    pixmap: &mut PixmapMut,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    thickness: f32,
+    color: RGBA,
+) {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    const SEGMENTS: u32 = 12;
+
+    let r = h / 2.0;
+    let ri = r - thickness;
+
+    let mut pb = PathBuilder::new();
+
+    // Outer pill
+    pb.move_to(x + r, y);
+    pb.line_to(x + w - r, y);
+    for i in 1..=SEGMENTS {
+        let angle = -FRAC_PI_2 + PI * i as f32 / SEGMENTS as f32;
+        pb.line_to(x + w - r + r * angle.cos(), y + r + r * angle.sin());
+    }
+    pb.line_to(x + r, y + h);
+    for i in 1..=SEGMENTS {
+        let angle = FRAC_PI_2 + PI * i as f32 / SEGMENTS as f32;
+        pb.line_to(x + r + r * angle.cos(), y + r + r * angle.sin());
+    }
+    pb.close();
+
+    // Inner pill (creates the hole)
+    let ix = x + thickness;
+    let iy = y + thickness;
+    let iw = w - 2.0 * thickness;
+    let ih = h - 2.0 * thickness;
+    let ir = ih / 2.0;
+
+    if ir > 0.0 && iw > 0.0 {
+        pb.move_to(ix + ir, iy);
+        for i in (0..SEGMENTS).rev() {
+            let angle = -FRAC_PI_2 + PI * i as f32 / SEGMENTS as f32;
+            pb.line_to(ix + ir + ri * angle.cos(), iy + ir + ri * angle.sin());
+        }
+        pb.line_to(ix + iw - ir, iy + ih);
+        for i in (0..SEGMENTS).rev() {
+            let angle = FRAC_PI_2 + PI * i as f32 / SEGMENTS as f32;
+            pb.line_to(
+                ix + iw - ir + ri * angle.cos(),
+                iy + ir + ri * angle.sin(),
+            );
+        }
+        pb.line_to(ix + ir, iy);
+        pb.close();
+    }
+
+    if let Some(path) = pb.finish() {
+        let paint = rgba_to_paint(color);
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::EvenOdd,
+            Transform::identity(),
+            None,
+        );
+    }
+}
+
 /// Draw a horizontal gradient rectangle from `left_color` to `right_color`.
 #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
 pub fn fill_gradient_rect(

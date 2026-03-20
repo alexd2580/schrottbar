@@ -192,19 +192,38 @@ impl Bar {
 
             // Pass 2: decorations (circles/pills) drawn over backgrounds, under text
             for (i, (item, &w)) in items.iter().zip(item_widths.iter()).enumerate() {
-                if let ContentShape::CircledText(_, circle_color) = &item.shape {
-                    if w <= height {
-                        let r = height as f32 / 2.0;
-                        let cx = positions[i] as f32 + r;
-                        renderer::draw_filled_circle(&mut pixmap, cx, r, r, *circle_color);
-                    } else {
-                        renderer::draw_pill(
-                            &mut pixmap,
-                            positions[i] as f32, 0.0,
-                            w as f32, height as f32,
-                            *circle_color,
-                        );
+                match &item.shape {
+                    ContentShape::CircledText(_, circle_color) => {
+                        if w <= height {
+                            let r = height as f32 / 2.0;
+                            let cx = positions[i] as f32 + r;
+                            renderer::draw_filled_circle(&mut pixmap, cx, r, r, *circle_color);
+                        } else {
+                            renderer::draw_pill(
+                                &mut pixmap,
+                                positions[i] as f32, 0.0,
+                                w as f32, height as f32,
+                                *circle_color,
+                            );
+                        }
                     }
+                    ContentShape::RingedText(_, ring_color) => {
+                        let thickness = 3.0;
+                        if w <= height {
+                            let r = height as f32 / 2.0;
+                            let cx = positions[i] as f32 + r;
+                            renderer::draw_ring(&mut pixmap, cx, r, r, thickness, *ring_color);
+                        } else {
+                            renderer::draw_pill_ring(
+                                &mut pixmap,
+                                positions[i] as f32, 0.0,
+                                w as f32, height as f32,
+                                thickness,
+                                *ring_color,
+                            );
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -222,7 +241,8 @@ impl Bar {
                             height,
                         );
                     }
-                    ContentShape::CircledText(text, _) => {
+                    ContentShape::CircledText(text, _)
+                    | ContentShape::RingedText(text, _) => {
                         let text_w = self.renderer.text_width(text);
                         let x_offset = height.saturating_sub(text_w) / 2;
                         self.renderer.draw_text_outlined(
@@ -358,7 +378,7 @@ impl Bar {
     fn item_width(&mut self, item: &ContentItem) -> u32 {
         match &item.shape {
             ContentShape::Text(text) => self.renderer.text_width(text),
-            ContentShape::CircledText(text, _) => {
+            ContentShape::CircledText(text, _) | ContentShape::RingedText(text, _) => {
                 let text_w = self.renderer.text_width(text);
                 let padding = self.height / 4;
                 self.height.max(text_w + padding)
