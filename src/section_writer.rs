@@ -1,6 +1,6 @@
 use crate::types::{
-    ClickHandler, ContentItem, ContentShape, IconData, PowerlineDirection, PowerlineFill,
-    PowerlineStyle, RGBA,
+    ClickHandler, ContentItem, ContentShape, HoverFlag, IconData, PowerlineDirection,
+    PowerlineFill, PowerlineStyle, RGBA,
 };
 
 pub const WHITE: RGBA = (240, 240, 248, 255);
@@ -11,7 +11,7 @@ pub const DARK_GRAY: RGBA = (50, 54, 68, 220);
 pub const DARKEST_GRAY: RGBA = (24, 26, 36, 230);
 pub const BLACK: RGBA = (0, 0, 0, 0);
 pub const OPAQUE_BLACK: RGBA = (20, 20, 28, 255);
-pub const RED: RGBA = (240, 62, 62, 255);
+pub const RED: RGBA = (252, 28, 28, 255);
 #[allow(dead_code)]
 pub const TOO_RED: RGBA = (255, 20, 20, 255);
 pub const DARK_GREEN: RGBA = (6, 140, 80, 255);
@@ -84,6 +84,7 @@ pub struct SectionWriter {
     bg: RGBA,
     fg: RGBA,
     click_handler: Option<ClickHandler>,
+    hover_flag: Option<HoverFlag>,
 }
 
 impl SectionWriter {
@@ -107,12 +108,28 @@ impl SectionWriter {
         self.click_handler = None;
     }
 
+    pub fn set_hover_flag(&mut self, flag: HoverFlag) {
+        self.hover_flag = Some(flag);
+    }
+
+    pub fn clear_hover_flag(&mut self) {
+        self.hover_flag = None;
+    }
+
+    /// Check whether the current hover flag is set (pointer is over this item's zone).
+    pub fn is_hovered(&self) -> bool {
+        self.hover_flag
+            .as_ref()
+            .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     pub fn write(&mut self, text: String) {
         self.texts.push(ContentItem {
-            shape: ContentShape::Text(text),
+            shape: ContentShape::Text(text.trim().to_string()),
             fg: self.fg,
             bg: self.bg,
             on_click: self.click_handler.clone(),
+            hover_flag: self.hover_flag.clone(),
         });
     }
 
@@ -122,6 +139,7 @@ impl SectionWriter {
             fg: self.fg,
             bg: self.bg,
             on_click: self.click_handler.clone(),
+            hover_flag: self.hover_flag.clone(),
         });
     }
 
@@ -135,6 +153,7 @@ impl SectionWriter {
             fg: self.bg,
             bg: self.bg,
             on_click: None,
+            hover_flag: None,
         });
     }
 
@@ -144,6 +163,7 @@ impl SectionWriter {
             fg: self.fg,
             bg: self.bg,
             on_click: self.click_handler.clone(),
+            hover_flag: self.hover_flag.clone(),
         });
     }
 
@@ -153,6 +173,7 @@ impl SectionWriter {
             fg: self.fg,
             bg: self.bg,
             on_click: self.click_handler.clone(),
+            hover_flag: self.hover_flag.clone(),
         });
     }
 
@@ -162,6 +183,7 @@ impl SectionWriter {
             fg: self.fg,
             bg: self.bg,
             on_click: self.click_handler.clone(),
+            hover_flag: self.hover_flag.clone(),
         });
     }
 
@@ -170,7 +192,8 @@ impl SectionWriter {
             shape: ContentShape::Powerline(self.style, fill, self.direction),
             fg: self.fg,
             bg: self.bg,
-            on_click: None, // powerline separators are not clickable
+            on_click: None,
+            hover_flag: self.hover_flag.clone(),
         });
     }
 
@@ -223,7 +246,32 @@ impl SectionWriter {
         self.close();
     }
 
-    pub fn unwrap(self) -> Vec<ContentItem> {
+    pub fn unwrap(mut self) -> Vec<ContentItem> {
+        // Auto-insert thin spaces between text and powerline separators.
+        // - Text followed by left-facing powerline: append thin space to text
+        // - Right-facing powerline followed by text: prepend thin space to text
+        let len = self.texts.len();
+        for i in 0..len.saturating_sub(1) {
+            let next_is_left_powerline = matches!(
+                self.texts[i + 1].shape,
+                ContentShape::Powerline(_, _, PowerlineDirection::Left)
+            );
+            let cur_is_right_powerline = matches!(
+                self.texts[i].shape,
+                ContentShape::Powerline(_, _, PowerlineDirection::Right)
+            );
+
+            if let ContentShape::Text(ref mut text) = self.texts[i].shape {
+                if next_is_left_powerline {
+                    text.push_str(THIN_SPACE);
+                }
+            }
+            if cur_is_right_powerline {
+                if let ContentShape::Text(ref mut text) = self.texts[i + 1].shape {
+                    *text = format!("{THIN_SPACE}{text}");
+                }
+            }
+        }
         self.texts
     }
 }
@@ -237,6 +285,7 @@ impl Default for SectionWriter {
             bg: BLACK,
             fg: WHITE,
             click_handler: None,
+            hover_flag: None,
         }
     }
 }

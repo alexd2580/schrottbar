@@ -3,6 +3,9 @@ use tiny_skia::{BlendMode, FillRule, Paint, PathBuilder, PixmapMut, Rect, Transf
 
 use crate::types::{IconData, Poly, Polys, PowerlineDirection, PowerlineFill, PowerlineStyle, RGBA};
 
+/// Horizontal pixel offset of the text shadow.
+const SHADOW_OFFSET_X: i32 = 2;
+
 pub struct Renderer {
     font_system: FontSystem,
     swash_cache: SwashCache,
@@ -34,7 +37,7 @@ fn shape_buffer(
     let metrics = Metrics::new(font_size, font_size);
     let mut buffer = Buffer::new(font_system, metrics);
     let attrs = Attrs::new().family(Family::Name(font_family));
-    buffer.set_text(font_system, text, attrs, Shaping::Advanced);
+    buffer.set_text(font_system, text, &attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(font_system, false);
     buffer
 }
@@ -102,11 +105,12 @@ impl Renderer {
     }
 
     pub fn text_width(&mut self, text: &str) -> u32 {
-        self.shape_text(text)
+        let w = self.shape_text(text)
             .layout_runs()
             .map(|run| run.line_w)
             .sum::<f32>()
-            .ceil() as u32
+            .ceil() as u32;
+        w + SHADOW_OFFSET_X as u32
     }
 
     pub fn draw_text_outlined(
@@ -221,7 +225,7 @@ impl Renderer {
 
         // Soft shadow: single pass offset down-right
         if let Some(shadow_color) = outline {
-            render_glyphs(pixmap, shadow_color, 2, 1);
+            render_glyphs(pixmap, shadow_color, SHADOW_OFFSET_X, 1);
         }
 
         // Foreground pass

@@ -1,29 +1,37 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use crate::types::{ClickHandler, PowerlineDirection, PowerlineStyle};
+use crate::types::{ClickHandler, HoverFlag, PowerlineDirection, PowerlineStyle};
 use log::debug;
 use tokio::process::Command;
 use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
     error::Error,
-    section_writer::{DARK_GREEN, RED, SectionWriter, THIN_SPACE, mix_colors},
+    section_writer::{DARK_GREEN, RED, SectionWriter, mix_colors},
     state_item::{
         ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem, wait_seconds,
     },
 };
 
 struct PulseaudioData {
+    #[allow(dead_code)]
     port: String,
     mute: bool,
     volume: f32,
 }
 type SharedData = Arc<Mutex<Option<PulseaudioData>>>;
-pub struct Pulseaudio(SharedData);
+pub struct Pulseaudio {
+    data: SharedData,
+    hover: HoverFlag,
+}
 
 impl Pulseaudio {
     pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(None)))
+        Self {
+            data: Arc::new(Mutex::new(None)),
+            hover: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
@@ -93,7 +101,8 @@ fn parse_active_port(sinks_output: &str, default_sink: &str) -> Option<String> {
 impl StateItem for Pulseaudio {
     async fn print(&self, writer: &mut SectionWriter, _output: &str) -> Result<(), Error> {
         writer.set_style(PowerlineStyle::Powerline);
-        writer.set_direction(PowerlineDirection::Left);
+        writer.set_direction(PowerlineDirection::Right);
+        writer.set_hover_flag(self.hover.clone());
 
         writer.set_on_click(Arc::new(|_button| {
             tokio::spawn(async {
@@ -101,7 +110,7 @@ impl StateItem for Pulseaudio {
             });
         }) as ClickHandler);
 
-        let state = self.0.lock().await;
+        let state = self.data.lock().await;
         if let Some(ref data) = *state {
             let vol_color = mix_colors(data.volume, 100f32, 125f32, DARK_GREEN, RED);
             writer.open_bg(vol_color);
@@ -116,13 +125,17 @@ impl StateItem for Pulseaudio {
                 "󰕾"
             };
 
-            let port = &data.port;
             let volume = data.volume;
 
-            writer.write(format!("{icon} {port} {volume:.0}%{THIN_SPACE}"));
+            if writer.is_hovered() {
+                writer.write(format!("{icon} {volume:.0}% {}", data.port));
+            } else {
+                writer.write(format!("{icon} {volume:.0}%"));
+            }
             writer.close();
         }
         writer.clear_on_click();
+        writer.clear_hover_flag();
         Ok(())
     }
 
@@ -132,7 +145,7 @@ impl StateItem for Pulseaudio {
         item_action_receiver: ItemActionReceiver,
     ) -> JoinHandle<()> {
         tokio::spawn(pulseaudio_coroutine(
-            self.0.clone(),
+            self.data.clone(),
             main_action_sender,
             item_action_receiver,
         ))

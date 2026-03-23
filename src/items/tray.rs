@@ -194,9 +194,9 @@ fn convert_icon(pixmaps: &[(i32, i32, Vec<u8>)], target_height: u32) -> Option<I
 /// Load a PNG file and return RGBA pixel data, scaled to target_height.
 fn load_png_icon(path: &Path, target_height: u32) -> Option<IconData> {
     let file = std::fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;
     buf.truncate(info.buffer_size());
 

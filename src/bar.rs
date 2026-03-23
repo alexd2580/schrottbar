@@ -6,7 +6,7 @@ use tokio::io::unix::AsyncFd;
 use wayland_client::{Connection, EventQueue, protocol::wl_shm};
 
 use crate::renderer::{self, Renderer};
-use crate::types::{Alignment, ClickHandler, ContentItem, ContentShape, PowerlineDirection, PowerlineFill, PowerlineStyle};
+use crate::types::{Alignment, ClickHandler, ContentItem, ContentShape, HoverFlag, PowerlineDirection, PowerlineFill, PowerlineStyle};
 use crate::wayland::{BarEvent, OutputInfo, WaylandState};
 
 use smithay_client_toolkit::shell::WaylandSurface;
@@ -17,6 +17,12 @@ struct HitZone {
     handler: ClickHandler,
 }
 
+struct HoverZone {
+    x_start: u32,
+    x_end: u32,
+    flag: HoverFlag,
+}
+
 pub struct Bar {
     height: u32,
     renderer: Renderer,
@@ -24,6 +30,11 @@ pub struct Bar {
     event_queue: EventQueue<WaylandState>,
     wayland: WaylandState,
     hit_zones: HashMap<usize, Vec<HitZone>>,
+    hover_zones: HashMap<usize, Vec<HoverZone>>,
+    /// Track which hover zone is currently active per surface, so we can send leave.
+    active_hover: HashMap<usize, usize>,
+    /// Last known pointer X per surface, for re-evaluating hover after redraw.
+    pointer_pos: HashMap<usize, f64>,
 }
 
 impl Bar {
@@ -55,6 +66,9 @@ impl Bar {
             event_queue,
             wayland,
             hit_zones: HashMap::new(),
+            hover_zones: HashMap::new(),
+            active_hover: HashMap::new(),
+            pointer_pos: HashMap::new(),
         }
     }
 
@@ -144,8 +158,9 @@ impl Bar {
         assert_eq!(pixmap.width(), width, "pixmap width mismatch");
         assert_eq!(pixmap.height(), height, "pixmap height mismatch");
 
-        // Collect hit zones for this monitor.
+        // Collect hit/hover zones for this monitor.
         let mut zones = Vec::new();
+        let mut hover_zones_vec: Vec<HoverZone> = Vec::new();
 
         // Render each alignment section in three passes:
         // 1. Backgrounds  2. Frames  3. Content (text, shapes)
@@ -171,13 +186,20 @@ impl Bar {
                 pos
             };
 
-            // Collect hit zones from items with click handlers.
+            // Collect hit/hover zones from items with handlers.
             for (i, (item, &w)) in items.iter().zip(item_widths.iter()).enumerate() {
                 if let Some(ref handler) = item.on_click {
                     zones.push(HitZone {
                         x_start: positions[i],
                         x_end: positions[i] + w,
                         handler: handler.clone(),
+                    });
+                }
+                if let Some(ref flag) = item.hover_flag {
+                    hover_zones_vec.push(HoverZone {
+                        x_start: positions[i],
+                        x_end: positions[i] + w,
+                        flag: flag.clone(),
                     });
                 }
             }
@@ -303,6 +325,7 @@ impl Bar {
         }
 
         self.hit_zones.insert(monitor_index, zones);
+        self.hover_zones.insert(monitor_index, hover_zones_vec);
 
         // Debug: save one frame.
         static SAVED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -373,6 +396,72 @@ impl Bar {
                 }
             }
         }
+    }
+
+    pub fn handle_hover(&mut self, surface_index: usize, x: f64) -> bool {
+        self.pointer_pos.insert(surface_index, x);
+        self.update_hover_flags(surface_index)
+    }
+
+    pub fn handle_hover_leave(&mut self, surface_index: usize) -> bool {
+        self.pointer_pos.remove(&surface_index);
+        self.update_hover_flags(surface_index)
+    }
+
+    /// Re-evaluate hover zones after a redraw (zones may have moved/changed).
+    /// Returns true if the hovered item changed (caller should re-render).
+    pub fn recheck_hover(&mut self) -> bool {
+        let surface_indices: Vec<usize> = self.pointer_pos.keys().copied().collect();
+        let mut changed = false;
+        for surface_index in surface_indices {
+            if self.update_hover_flags(surface_index) {
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Update hover flags for a surface based on current pointer position.
+    /// Returns true if the active hover zone changed.
+    fn update_hover_flags(&mut self, surface_index: usize) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+
+        let x = self.pointer_pos.get(&surface_index).copied();
+        let new_zone = x.and_then(|x| {
+            let x = x as u32;
+            self.hover_zones.get(&surface_index).and_then(|zones| {
+                zones.iter().enumerate().find_map(|(i, zone)| {
+                    (x >= zone.x_start && x < zone.x_end).then_some(i)
+                })
+            })
+        });
+
+        let prev = self.active_hover.get(&surface_index).copied();
+        if new_zone == prev {
+            return false;
+        }
+
+        // Clear previous zone's flag.
+        if let Some(prev_idx) = prev
+            && let Some(zones) = self.hover_zones.get(&surface_index)
+            && let Some(zone) = zones.get(prev_idx)
+        {
+            zone.flag.store(false, Relaxed);
+        }
+
+        // Set new zone's flag.
+        if let Some(new_idx) = new_zone {
+            if let Some(zones) = self.hover_zones.get(&surface_index)
+                && let Some(zone) = zones.get(new_idx)
+            {
+                zone.flag.store(true, Relaxed);
+            }
+            self.active_hover.insert(surface_index, new_idx);
+        } else {
+            self.active_hover.remove(&surface_index);
+        }
+
+        true
     }
 
     fn item_width(&mut self, item: &ContentItem) -> u32 {

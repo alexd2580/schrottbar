@@ -48,6 +48,8 @@ pub enum BarEvent {
     OutputAdded,
     OutputRemoved,
     Click { surface_index: usize, x: f64, button: u32 },
+    Hover { surface_index: usize, x: f64 },
+    HoverLeave { surface_index: usize },
 }
 
 pub struct WaylandState {
@@ -359,14 +361,28 @@ impl PointerHandler for WaylandState {
         use smithay_client_toolkit::seat::pointer::PointerEventKind;
 
         for event in events {
-            if let PointerEventKind::Press { button, .. } = event.kind
-                && let Some(surface_index) = self.find_surface_index(&event.surface) {
+            let Some(surface_index) = self.find_surface_index(&event.surface) else {
+                continue;
+            };
+            match event.kind {
+                PointerEventKind::Press { button, .. } => {
                     self.pending_events.push(BarEvent::Click {
                         surface_index,
                         x: event.position.0,
                         button,
                     });
                 }
+                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
+                    self.pending_events.push(BarEvent::Hover {
+                        surface_index,
+                        x: event.position.0,
+                    });
+                }
+                PointerEventKind::Leave { .. } => {
+                    self.pending_events.push(BarEvent::HoverLeave { surface_index });
+                }
+                _ => {}
+            }
         }
     }
 }

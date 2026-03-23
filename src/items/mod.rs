@@ -1,4 +1,5 @@
 pub mod hspace;
+pub mod network;
 mod niri;
 pub mod paymo;
 pub mod pulseaudio;
@@ -6,6 +7,7 @@ pub mod system;
 pub mod test_display;
 pub mod time;
 pub mod tray;
+pub mod updates;
 pub mod weather;
 pub mod weather_icons;
 pub mod windows;

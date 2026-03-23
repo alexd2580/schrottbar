@@ -38,19 +38,26 @@ fn init_state_items() -> StateItems {
     let tray = items::tray::Tray::new(25);
     let pulseaudio = items::pulseaudio::Pulseaudio::new();
     let weather = items::weather::Weather::new();
+    let network = items::network::Network::new();
     let system = System::new();
     let time = items::time::Time::new();
+    let updates = items::updates::Updates::new();
 
     StateItems {
         left: vec![
+            Box::new(network),
+            Box::new(pulseaudio),
+            Box::new(system),
+            Box::new(updates),
+        ],
+        center: vec![
             Box::new(workspaces),
             Box::new(items::hspace::HSpace::new(20)),
             Box::new(windows),
         ],
-        center: vec![Box::new(weather), Box::new(paymo)],
         right: vec![
-            Box::new(pulseaudio),
-            Box::new(system),
+            Box::new(weather),
+            Box::new(paymo),
             Box::new(time),
             Box::new(tray),
         ],
@@ -59,12 +66,13 @@ fn init_state_items() -> StateItems {
 
 type FrameContent = (Vec<ContentItem>, Vec<ContentItem>, Vec<ContentItem>);
 
+/// Returns true if hover state changed after redraw (caller should re-render).
 async fn redraw(
     state_items: &StateItems,
     bar: &mut Bar,
     last_redraw: &mut std::time::Instant,
     prev_frames: &mut HashMap<String, FrameContent>,
-) -> Result<(), error::Error> {
+) -> Result<bool, error::Error> {
     let now = std::time::Instant::now();
     let dt = now.duration_since(*last_redraw);
     *last_redraw = now;
@@ -103,11 +111,14 @@ async fn redraw(
         prev_frames.insert(output.name.clone(), new_frame);
         any_drawn = true;
     }
-    if any_drawn {
+    let hover_changed = if any_drawn {
         bar.flush();
-    }
+        bar.recheck_hover()
+    } else {
+        false
+    };
     debug!("Redraw done");
-    Ok(())
+    Ok(hover_changed)
 }
 
 /// Minimum time between redraws. Requests arriving sooner are deferred.
@@ -141,8 +152,21 @@ async fn main_loop(
         tokio::select! {
             events = bar.next_event() => {
                 for event in events {
-                    if let crate::wayland::BarEvent::Click { surface_index, x, button } = event {
-                        bar.handle_click(surface_index, x, button);
+                    match event {
+                        crate::wayland::BarEvent::Click { surface_index, x, button } => {
+                            bar.handle_click(surface_index, x, button);
+                        }
+                        crate::wayland::BarEvent::Hover { surface_index, x } => {
+                            if bar.handle_hover(surface_index, x) {
+                                redraw_pending = true;
+                            }
+                        }
+                        crate::wayland::BarEvent::HoverLeave { surface_index } => {
+                            if bar.handle_hover_leave(surface_index) {
+                                redraw_pending = true;
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -156,7 +180,9 @@ async fn main_loop(
                     break;
                 }
                 redraw_pending = false;
-                redraw(state_items, &mut bar, &mut last_redraw, &mut prev_frames).await?;
+                if redraw(state_items, &mut bar, &mut last_redraw, &mut prev_frames).await? {
+                    redraw_pending = true;
+                }
             }
             message = main_action_receiver.next() => {
                 match message {
@@ -174,7 +200,9 @@ async fn main_loop(
 
                         let since_last = last_redraw.elapsed();
                         if since_last >= MIN_REDRAW_INTERVAL {
-                            redraw(state_items, &mut bar, &mut last_redraw, &mut prev_frames).await?;
+                            if redraw(state_items, &mut bar, &mut last_redraw, &mut prev_frames).await? {
+                                redraw_pending = true;
+                            }
                         } else {
                             // Defer: will fire on the next select iteration via the deadline branch.
                             redraw_pending = true;

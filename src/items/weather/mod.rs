@@ -1,13 +1,14 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use crate::types::{PowerlineDirection, PowerlineStyle, RGBA};
+use crate::types::{HoverFlag, PowerlineDirection, PowerlineStyle, RGBA};
 use log::{debug, info};
 use serde::Deserialize;
 use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
     error::Error,
-    section_writer::{BLUE, DARK_GREEN, RED, SectionWriter, THIN_SPACE, mix_colors_multi},
+    section_writer::{BLUE, DARK_GREEN, RED, SectionWriter, mix_colors_multi},
     state_item::{
         ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem, wait_seconds,
     },
@@ -75,11 +76,17 @@ async fn fetch_weather() -> Option<WeatherData> {
 }
 
 type SharedData = Arc<Mutex<Option<WeatherData>>>;
-pub struct Weather(SharedData);
+pub struct Weather {
+    data: SharedData,
+    hover: HoverFlag,
+}
 
 impl Weather {
     pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(None)))
+        Self {
+            data: Arc::new(Mutex::new(None)),
+            hover: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
@@ -137,31 +144,37 @@ const WEATHER_REFERENCE_POINTS: [(f32, RGBA); 4] =
 impl StateItem for Weather {
     #[allow(clippy::cast_precision_loss)]
     async fn print(&self, writer: &mut SectionWriter, _output: &str) -> Result<(), Error> {
-        writer.set_style(PowerlineStyle::Fade);
+        writer.set_style(PowerlineStyle::Powerline);
         writer.set_direction(PowerlineDirection::Left);
+        writer.set_hover_flag(self.hover.clone());
 
-        let state = self.0.lock().await;
+        let hovered = writer.is_hovered();
+        let state = self.data.lock().await;
         if let Some(ref data) = *state {
             let temp_color = mix_colors_multi(data.temp as f32, &WEATHER_REFERENCE_POINTS);
             writer.with_bg(temp_color, &|writer| {
                 let since_midnight = duration_since_midnight();
                 let weather_icon = weather_icon(data, since_midnight);
 
-                writer.write(format!(
-                    "{weather_icon} {} {}°C{THIN_SPACE}",
-                    data.condition, data.temp
-                ));
+                if hovered {
+                    writer.write(format!(
+                        "{weather_icon} {} {}°C",
+                        data.condition, data.temp
+                    ));
+                } else {
+                    writer.write(format!("{weather_icon} {}°C", data.temp));
+                }
                 writer.split();
-
                 let (icon, duration) = next_event(data, since_midnight);
                 let (hours, minutes) = split_duration(duration);
-                writer.write(format!("{icon} in {hours:0>2}:{minutes:0>2}{THIN_SPACE}"));
+                writer.write(format!("{icon} in {hours:0>2}:{minutes:0>2}"));
             });
         } else {
             writer.with_bg(RED, &|writer| {
-                writer.write(format!("\u{f0164}{THIN_SPACE}"))
+                writer.write(format!("\u{f0164}"))
             });
         }
+        writer.clear_hover_flag();
         Ok(())
     }
 
@@ -171,7 +184,7 @@ impl StateItem for Weather {
         item_action_receiver: ItemActionReceiver,
     ) -> JoinHandle<()> {
         tokio::spawn(weather_coroutine(
-            self.0.clone(),
+            self.data.clone(),
             main_action_sender,
             item_action_receiver,
         ))

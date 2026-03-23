@@ -1,13 +1,12 @@
-use std::{ops::IndexMut, sync::Arc, time};
+use std::{sync::Arc, time};
 
-use crate::types::{PowerlineDirection, PowerlineStyle};
+use crate::types::{HoverFlag, PowerlineDirection, PowerlineStyle};
 use log::debug;
-use sysinfo::{ComponentExt, CpuExt, SystemExt};
 use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
     error::Error,
-    section_writer::{DARK_GREEN, RED, SectionWriter, THIN_SPACE, mix_colors},
+    section_writer::{DARK_GREEN, RED, SectionWriter, mix_colors},
     state_item::{ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem},
 };
 
@@ -52,21 +51,22 @@ struct SystemData {
     ram_usage_formatted: Option<(String, String)>,
 
     sysinfo: sysinfo::System,
+    components: sysinfo::Components,
 }
 
 impl SystemData {
     fn new() -> Self {
         let mut sysinfo = sysinfo::System::new();
 
-        sysinfo.refresh_cpu();
+        sysinfo.refresh_cpu_all();
         let cpu_refresh_time = time::Instant::now();
         sysinfo.refresh_memory();
         let mem_refresh_time = time::Instant::now();
-        sysinfo.refresh_components_list();
+
+        let components = sysinfo::Components::new_with_refreshed_list();
 
         let k10_tctl_label = "k10temp Tctl";
-        let cpu_temp_component_index = sysinfo
-            .components()
+        let cpu_temp_component_index = components
             .iter()
             .enumerate()
             .find_map(|(index, value)| (value.label() == k10_tctl_label).then_some(index));
@@ -88,6 +88,7 @@ impl SystemData {
             ram_usage: Some(ram_pct),
             ram_usage_formatted: Some((format_bytes(used_ram), format_bytes(total_ram))),
             sysinfo,
+            components,
         }
     }
 
@@ -106,15 +107,13 @@ impl SystemData {
         let mut updated = false;
         if self.cpu_refresh_time.elapsed() > self.cpu_refresh_period {
             self.cpu_refresh_time = time::Instant::now();
-            self.sysinfo.refresh_cpu();
+            self.sysinfo.refresh_cpu_all();
 
-            let global_cpu = self.sysinfo.global_cpu_info();
-            self.cpu_usage = Some(global_cpu.cpu_usage());
+            self.cpu_usage = Some(self.sysinfo.global_cpu_usage());
 
-            self.cpu_temp = self.cpu_temp_component_index.as_ref().map(|&index| {
-                let component = self.sysinfo.components_mut().index_mut(index);
-                component.refresh();
-                component.temperature()
+            self.cpu_temp = self.cpu_temp_component_index.and_then(|index| {
+                self.components.refresh(false);
+                self.components[index].temperature()
             });
 
             updated = true;
@@ -149,6 +148,7 @@ type SharedData = Arc<Mutex<Option<SystemData>>>;
 pub struct System {
     data: SharedData,
     overrides: Option<Overrides>,
+    hover: HoverFlag,
 }
 
 impl System {
@@ -156,6 +156,7 @@ impl System {
         Self {
             data: Arc::new(Mutex::new(None)),
             overrides: None,
+            hover: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -168,6 +169,7 @@ impl System {
                 cpu_temp,
                 ram_usage,
             }),
+            hover: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -176,8 +178,10 @@ impl System {
 impl StateItem for System {
     async fn print(&self, writer: &mut SectionWriter, _output: &str) -> Result<(), Error> {
         writer.set_style(PowerlineStyle::Powerline);
-        writer.set_direction(PowerlineDirection::Left);
+        writer.set_direction(PowerlineDirection::Right);
+        writer.set_hover_flag(self.hover.clone());
 
+        let hovered = writer.is_hovered();
         let state = self.data.lock().await;
         let spinner_angle = crate::utils::spinner::angle();
 
@@ -194,48 +198,51 @@ impl StateItem for System {
             ram_formatted = state.as_ref().and_then(|d| d.ram_usage_formatted.as_ref());
         }
 
-        // CPU
-        if let Some(cpu_usage) = cpu_usage {
-            let cpu_bg = if let Some(cpu_temp) = cpu_temp {
+        // CPU + RAM in one merged section
+        let cpu_bg = if let Some(cpu_usage) = cpu_usage {
+            if let Some(cpu_temp) = cpu_temp {
                 mix_colors(cpu_temp, 50f32, 70f32, DARK_GREEN, RED)
             } else {
                 mix_colors(cpu_usage, 80f32, 100f32, DARK_GREEN, RED)
-            };
-            writer.with_bg(cpu_bg, &|writer| {
-                writer.write(format!("󰍛 {cpu_usage:.0}%{THIN_SPACE}"));
-                if cpu_temp.is_some() {
-                    writer.split();
-                }
-                if let Some(cpu_temp) = cpu_temp {
-                    writer.write(format!("{cpu_temp:.0}°C{THIN_SPACE}"));
-                }
-            });
+            }
         } else {
-            writer.with_bg(DARK_GREEN, &|writer| {
-                writer.write("󰍛".to_string());
-                writer.write_spinner(spinner_angle);
-            });
+            DARK_GREEN
+        };
+
+        writer.open_bg(cpu_bg);
+        if let Some(cpu_usage) = cpu_usage {
+            writer.write(format!("󰍛 {cpu_usage:.0}%"));
+            if let Some(cpu_temp) = cpu_temp {
+                writer.split();
+                writer.write(format!("{cpu_temp:.0}°C"));
+            }
+        } else {
+            writer.write("󰍛".to_string());
+            writer.write_spinner(spinner_angle);
         }
 
-        // RAM
+        // Inner separator between CPU and RAM
+        writer.split();
+
         if let Some(ram_usage) = ram_usage {
-            let ram_bg = mix_colors(ram_usage, 75f32, 100f32, DARK_GREEN, RED);
-            writer.with_bg(ram_bg, &|writer| {
+            if hovered {
                 if let Some((used_ram, total_ram)) = ram_formatted {
                     writer.write(format!(
-                        "󰘚 {ram_usage:.0}% ({used_ram}/{total_ram}){THIN_SPACE}"
+                        "󰘚 {ram_usage:.0}% ({used_ram}/{total_ram})"
                     ));
                 } else {
-                    writer.write(format!("󰘚 {ram_usage:.0}%{THIN_SPACE}"));
+                    writer.write(format!("󰘚 {ram_usage:.0}%"));
                 }
-            });
+            } else {
+                writer.write(format!("󰘚 {ram_usage:.0}%"));
+            }
         } else {
-            writer.with_bg(DARK_GREEN, &|writer| {
-                writer.write("󰘚".to_string());
-                writer.write_spinner(spinner_angle);
-            });
+            writer.write("󰘚".to_string());
+            writer.write_spinner(spinner_angle);
         }
 
+        writer.close();
+        writer.clear_hover_flag();
         Ok(())
     }
 

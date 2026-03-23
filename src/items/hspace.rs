@@ -23,6 +23,7 @@ impl StateItem for HSpace {
             bg: (0, 0, 0, 0),
             shape: ContentShape::HSpace(self.0),
             on_click: None,
+            hover_flag: None,
         });
         Ok(())
     }

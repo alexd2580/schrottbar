@@ -5,7 +5,7 @@ use tokio::task::JoinHandle;
 
 use crate::{
     error::Error,
-    section_writer::{ACCENT_DIM, SectionWriter, THIN_SPACE, WHITE},
+    section_writer::{ACCENT_DIM, SectionWriter, WHITE},
     state_item::{
         ItemAction, ItemActionReceiver, MainAction, MainActionSender, StateItem, wait_seconds,
     },
@@ -30,7 +30,7 @@ impl StateItem for Time {
         writer.set_style(PowerlineStyle::Powerline);
         writer.set_direction(PowerlineDirection::Left);
         writer.open(ACCENT_DIM, WHITE);
-        writer.write(format!("󰥔 {}{THIN_SPACE}", now.format(&self.format)));
+        writer.write(format!("󰥔 {}", now.format(&self.format)));
         writer.close();
         Ok(())
     }

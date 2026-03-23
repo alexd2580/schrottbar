@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 #[allow(clippy::upper_case_acronyms)]
 pub type RGBA = (u8, u8, u8, u8);
@@ -7,6 +8,9 @@ pub type Polys = Vec<Poly>;
 
 /// Click handler closure. The `u32` parameter is the mouse button code.
 pub type ClickHandler = Arc<dyn Fn(u32) + Send + Sync>;
+
+/// Shared flag set by the bar when the pointer is over this item's zone.
+pub type HoverFlag = Arc<AtomicBool>;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Alignment {
@@ -69,6 +73,8 @@ pub struct ContentItem {
     pub bg: RGBA,
     pub shape: ContentShape,
     pub on_click: Option<ClickHandler>,
+    /// When set, the bar updates this flag based on pointer position.
+    pub hover_flag: Option<HoverFlag>,
 }
 
 impl Clone for ContentItem {
@@ -78,6 +84,7 @@ impl Clone for ContentItem {
             bg: self.bg,
             shape: self.shape.clone(),
             on_click: self.on_click.clone(),
+            hover_flag: self.hover_flag.clone(),
         }
     }
 }
